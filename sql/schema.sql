@@ -108,6 +108,8 @@ RETURNS TABLE (
     metadata      JSONB,
     file_name     TEXT,
     source_type   TEXT,
+    display_name  TEXT,
+    report_group  TEXT,
     similarity    FLOAT
 )
 LANGUAGE plpgsql
@@ -118,6 +120,7 @@ BEGIN
         dc.id, dc.document_id, dc.chunk_index,
         dc.text_content, dc.metadata,
         d.file_name, d.source_type,
+        d.display_name, d.report_group,
         1 - (dc.embedding <=> query_embedding) AS similarity
     FROM document_chunks dc
     JOIN documents d ON d.id = dc.document_id

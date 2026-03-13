@@ -96,9 +96,32 @@ def run_pipeline(source: str, do_embed: bool = True) -> None:
     else:
         print("[EMBED] 已跳過嵌入步驟（--no-embed）")
 
-    # 6) 寫入 Supabase
+    # 6) 寫入 Supabase（自動推斷 metadata）
+    # 自動推斷分類
+    _fn = file_name.lower()
+    if source_type == "pdf":
+        if "永續" in _fn or "sustain" in _fn:
+            category = "永續報告書"
+        elif "年報" in _fn or "annual" in _fn:
+            category = "年度報告"
+        else:
+            category = "其他"
+    else:
+        if "/esg/" in _fn or "esg" in _fn:
+            category = "ESG專區"
+        elif "news" in _fn or "新聞" in _fn:
+            category = "新聞"
+        elif "newsletter" in _fn or "電子報" in _fn:
+            category = "電子報"
+        else:
+            category = "官網"
+
     exporter = SupabaseExporter(client)
-    doc_id = exporter.insert_document(file_name, file_hash, source_type)
+    doc_id = exporter.insert_document(
+        file_name, file_hash, source_type,
+        category=category,
+        report_group=category,
+    )
     exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
 
     print(f"\n{'='*60}")

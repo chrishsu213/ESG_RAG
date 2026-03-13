@@ -134,10 +134,29 @@ def ingest_document(req: IngestRequest):
             texts = [c["text_content"] for c in chunks]
             embeddings = embedder.embed_batch(texts)
 
-        # 6) 入庫
+        # 6) 入庫（自動推斷分類）
+        _fn = doc_info["file_name"].lower()
+        if doc_info["source_type"] == "pdf":
+            if "永續" in _fn or "sustain" in _fn:
+                cat = "永續報告書"
+            elif "年報" in _fn or "annual" in _fn:
+                cat = "年度報告"
+            else:
+                cat = "其他"
+        else:
+            if "/esg/" in _fn or "esg" in _fn:
+                cat = "ESG專區"
+            elif "news" in _fn or "新聞" in _fn:
+                cat = "新聞"
+            elif "newsletter" in _fn or "電子報" in _fn:
+                cat = "電子報"
+            else:
+                cat = "官網"
+
         exporter = SupabaseExporter(client)
         doc_id = exporter.insert_document(
-            doc_info["file_name"], doc_info["file_hash"], doc_info["source_type"]
+            doc_info["file_name"], doc_info["file_hash"], doc_info["source_type"],
+            category=cat, report_group=cat,
         )
         exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
 
