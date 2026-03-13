@@ -1,0 +1,27 @@
+# 敏感檔案
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 原始資料
+raw_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系統
+.DS_Store
+Thumbs.db
+
+# Gemini Agent
+.gemini/

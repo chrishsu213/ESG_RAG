@@ -1,0 +1,230 @@
+{
+  "metadata": {
+    "description": "RAG 知識庫品質驗收測試題庫",
+    "version": "1.0",
+    "total_questions": 30,
+    "categories": {
+      "factual": "事實查詢（有明確答案）",
+      "reasoning": "推理分析（需要綜合多段資料）",
+      "cross_doc": "跨文件查詢（需從多份文件中取資料）",
+      "refusal": "拒答測試（知識庫中不應有答案）",
+      "numeric": "數值查詢（精確數字）",
+      "temporal": "時序查詢（涉及年份比較）"
+    }
+  },
+  "questions": [
+    {
+      "id": 1,
+      "category": "factual",
+      "question": "台泥集團的 SBT 減碳路徑目標是什麼？",
+      "expected_keywords": ["SBT", "1.5°C", "科學基礎"],
+      "difficulty": "easy"
+    },
+    {
+      "id": 2,
+      "category": "numeric",
+      "question": "台泥 2024 年的 EBITDA 利潤率是多少？",
+      "expected_keywords": ["28.82%", "EBITDA"],
+      "difficulty": "easy"
+    },
+    {
+      "id": 3,
+      "category": "numeric",
+      "question": "台泥 2024 年的儲能裝置容量是多少 MWh？",
+      "expected_keywords": ["2884.63", "MWh"],
+      "difficulty": "easy"
+    },
+    {
+      "id": 4,
+      "category": "factual",
+      "question": "台泥的永續產品營收占比是多少？",
+      "expected_keywords": ["57%"],
+      "difficulty": "easy"
+    },
+    {
+      "id": 5,
+      "category": "numeric",
+      "question": "台泥全球員工共有多少國籍，總人數是多少？",
+      "expected_keywords": ["46", "13772"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 6,
+      "category": "factual",
+      "question": "台泥減碳增綠資本支出占總資本支出的比例是多少？",
+      "expected_keywords": ["70%"],
+      "difficulty": "easy"
+    },
+    {
+      "id": 7,
+      "category": "numeric",
+      "question": "台泥 2024 年範疇一碳排密度是多少（公斤 CO2e/噸膠結材料）？",
+      "expected_keywords": ["619"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 8,
+      "category": "temporal",
+      "question": "台泥 2024 年相比 2023 年的總減碳量變化是多少？",
+      "expected_keywords": ["-4%", "減少"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 9,
+      "category": "factual",
+      "question": "台泥在歐洲的 EBITDA 利潤率佔比是多少？",
+      "expected_keywords": ["41%"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 10,
+      "category": "reasoning",
+      "question": "台泥的碳競爭力策略包含哪些主要面向？",
+      "expected_keywords": ["碳競爭力"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 11,
+      "category": "reasoning",
+      "question": "台泥在 AI 創新與電動化方面有哪些具體佈局？",
+      "expected_keywords": ["AI", "電動化", "儲能"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 12,
+      "category": "factual",
+      "question": "台泥 DAKA 再生資源處理中心的主要功能是什麼？",
+      "expected_keywords": ["DAKA", "再生", "資源"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 13,
+      "category": "reasoning",
+      "question": "台泥的公正轉型策略包含哪些內容？",
+      "expected_keywords": ["公正轉型"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 14,
+      "category": "cross_doc",
+      "question": "台泥在網站和永續報告書中對碳排放的描述有什麼異同？",
+      "expected_keywords": ["碳排"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 15,
+      "category": "cross_doc",
+      "question": "台泥的多元共融政策在年報和永續報告中分別有哪些描述？",
+      "expected_keywords": ["多元共融"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 16,
+      "category": "reasoning",
+      "question": "台泥的海外水泥事業分布在哪些地區？各地區的營運狀況如何？",
+      "expected_keywords": ["海外", "水泥"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 17,
+      "category": "refusal",
+      "question": "台積電 2024 年的營收是多少？",
+      "expected_keywords": ["無法", "沒有", "不在"],
+      "difficulty": "easy",
+      "note": "AI 應拒答，因為知識庫中不應有台積電的資料"
+    },
+    {
+      "id": 18,
+      "category": "refusal",
+      "question": "請問明天的天氣如何？",
+      "expected_keywords": ["無法", "沒有"],
+      "difficulty": "easy",
+      "note": "AI 應拒答，這不是知識庫能回答的問題"
+    },
+    {
+      "id": 19,
+      "category": "refusal",
+      "question": "台泥 2030 年的實際碳排放量會是多少？",
+      "expected_keywords": ["無法", "預測", "目標"],
+      "difficulty": "medium",
+      "note": "AI 不應編造未來數據，但可以提供目標數字"
+    },
+    {
+      "id": 20,
+      "category": "factual",
+      "question": "台泥的公司治理架構中，董事會的組成是什麼？",
+      "expected_keywords": ["董事", "治理"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 21,
+      "category": "reasoning",
+      "question": "台泥如何因應全球碳邊境調整機制（CBAM）？",
+      "expected_keywords": ["CBAM", "碳邊境"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 22,
+      "category": "temporal",
+      "question": "台泥近年來的營收變化趨勢如何？",
+      "expected_keywords": ["營收", "成長", "41%"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 23,
+      "category": "factual",
+      "question": "台泥的供應鏈管理政策包含哪些要點？",
+      "expected_keywords": ["供應鏈", "管理"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 24,
+      "category": "cross_doc",
+      "question": "綜合所有來源，台泥在循環經濟方面有哪些具體作為？",
+      "expected_keywords": ["循環經濟"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 25,
+      "category": "numeric",
+      "question": "台泥 2024 年的營業淨利是多少億元？",
+      "expected_keywords": ["171"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 26,
+      "category": "reasoning",
+      "question": "台泥致股東報告書中提到了哪些重大挑戰和應對策略？",
+      "expected_keywords": ["股東", "挑戰"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 27,
+      "category": "factual",
+      "question": "台泥在生物多樣性和礦區復育方面有哪些作為？",
+      "expected_keywords": ["生物多樣性", "礦區", "復育"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 28,
+      "category": "temporal",
+      "question": "台泥的永續目標在不同年份有什麼變化？",
+      "expected_keywords": ["永續", "目標"],
+      "difficulty": "hard"
+    },
+    {
+      "id": 29,
+      "category": "factual",
+      "question": "台泥在替代燃料和低碳水泥方面的技術進展如何？",
+      "expected_keywords": ["替代燃料", "低碳水泥"],
+      "difficulty": "medium"
+    },
+    {
+      "id": 30,
+      "category": "cross_doc",
+      "question": "請綜合所有來源，說明台泥的淨零轉型路徑和時程規劃",
+      "expected_keywords": ["淨零", "轉型", "路徑"],
+      "difficulty": "hard"
+    }
+  ]
+}

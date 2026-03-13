@@ -1,0 +1,6 @@
+# API 專用依賴（不含管理端套件如 Streamlit、PyMuPDF 等）
+supabase>=2.0.0
+python-dotenv>=1.0.0
+google-genai>=1.0.0
+fastapi>=0.110.0
+uvicorn>=0.29.0

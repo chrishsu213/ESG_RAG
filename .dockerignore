@@ -1,0 +1,28 @@
+# 敏感檔案
+.env
+.env.*
+
+# 管理端 UI（不需要部署）
+admin_ui/
+
+# 原始資料
+raw_data/
+
+# 測試檔案
+tests/
+test_*.py
+
+# Python 快取
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# 其他
+*.md
+scripts/
+sql/
+.gemini/
