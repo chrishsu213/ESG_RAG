@@ -89,6 +89,14 @@ class SearchResult(BaseModel):
     page_end: Optional[int] = None
     similarity: float
     search_type: Optional[str] = None
+    # ── 文件元資料 ──
+    category: Optional[str] = None
+    language: Optional[str] = None
+    fiscal_year: Optional[str] = None
+    status: Optional[str] = None
+    confidentiality: Optional[str] = None
+    tags: Optional[list] = None
+    publish_date: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -202,6 +210,13 @@ async def search(req: SearchRequest, _=Depends(verify_api_key)):
                 page_end=meta.get("page_end"),
                 similarity=r.get("similarity", 0),
                 search_type=r.get("search_type"),
+                category=r.get("category"),
+                language=r.get("language"),
+                fiscal_year=r.get("fiscal_year"),
+                status=r.get("status"),
+                confidentiality=r.get("confidentiality"),
+                tags=r.get("tags"),
+                publish_date=str(r["publish_date"]) if r.get("publish_date") else None,
             ))
 
         return SearchResponse(results=items, count=len(items))

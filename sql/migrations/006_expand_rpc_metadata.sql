@@ -1,99 +1,10 @@
 -- ==========================================
--- TCC RAG 知識庫 — 完整資料庫 Schema
--- 最後更新：2026-03-13
---
--- 新環境部署：在 Supabase SQL Editor 執行此檔即可
+-- 006: 擴充 RPC 回傳欄位
+-- 讓 match_chunks 和 match_chunks_hybrid 回傳完整的 document 元資料
+-- 在 Supabase SQL Editor 中執行
 -- ==========================================
 
--- 0) 啟用 pgvector 擴充
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- ==========================================
--- 1) 主表：documents
--- ==========================================
-CREATE TABLE IF NOT EXISTS documents (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    file_name       TEXT        NOT NULL,
-    file_hash       TEXT        NOT NULL UNIQUE,       -- SHA-256 (檔案) 或 URL (網頁)
-    source_type     TEXT        NOT NULL,               -- 'pdf' | 'docx' | 'url' | 'audio'
-    -- 分類與命名
-    category        TEXT        DEFAULT '其他',          -- 網站 | 永續報告書 | 年度報告 | 財務報告 | 公司政策 | 會議紀錄 | 法說會 | 其他
-    display_name    TEXT,                                -- 使用者自訂顯示名稱
-    report_group    TEXT,                                -- 歸屬報告群組
-    -- Metadata
-    language        TEXT        DEFAULT 'zh-TW',         -- zh-TW | en | ja | zh-CN
-    publish_date    DATE,                                -- 文件發布日期
-    fiscal_year     TEXT,                                -- 會計年度（如 2024, 113）
-    status          TEXT        DEFAULT '已發布',         -- 草稿 | 已審校 | 已發布
-    tags            JSONB       DEFAULT '[]'::jsonb,     -- 標籤 ["碳排", "水泥"]
-    confidentiality TEXT        DEFAULT '公開',           -- 公開 | 內部 | 機密
-    -- 時間戳
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_documents_report_group    ON documents (report_group);
-CREATE INDEX IF NOT EXISTS idx_documents_language        ON documents (language);
-CREATE INDEX IF NOT EXISTS idx_documents_fiscal_year     ON documents (fiscal_year);
-CREATE INDEX IF NOT EXISTS idx_documents_status          ON documents (status);
-CREATE INDEX IF NOT EXISTS idx_documents_confidentiality ON documents (confidentiality);
-CREATE INDEX IF NOT EXISTS idx_documents_tags            ON documents USING gin(tags);
-
--- ==========================================
--- 2) 子表：document_chunks（含 embedding + FTS）
--- ==========================================
-CREATE TABLE IF NOT EXISTS document_chunks (
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    document_id   BIGINT  NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    chunk_index   INT     NOT NULL,
-    text_content  TEXT    NOT NULL,
-    embedding     vector(768),                            -- Gemini embedding (768d)
-    metadata      JSONB   DEFAULT '{}'::JSONB,
-    fts           tsvector GENERATED ALWAYS AS (
-                      to_tsvector('simple', coalesce(text_content, ''))
-                  ) STORED,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON document_chunks(document_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding   ON document_chunks USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS idx_chunks_fts         ON document_chunks USING gin(fts);
-
--- ==========================================
--- 3) 專有名詞字典表
--- ==========================================
-CREATE TABLE IF NOT EXISTS terms_dictionary (
-    id          BIGSERIAL PRIMARY KEY,
-    term        TEXT NOT NULL UNIQUE,
-    full_name   TEXT NOT NULL,
-    category    TEXT DEFAULT '一般',       -- 一般 | 人名 | 組織 | 技術
-    language    TEXT DEFAULT 'zh-TW',
-    created_at  TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_terms_term     ON terms_dictionary (term);
-CREATE INDEX IF NOT EXISTS idx_terms_category ON terms_dictionary (category);
-
--- 預設 ESG 常用詞彙
-INSERT INTO terms_dictionary (term, full_name, category) VALUES
-    ('TCC',     '台泥集團 (TCC Group)',                        '組織'),
-    ('DAKA',    '台泥DAKA再生資源處理中心',                      '組織'),
-    ('SBT',     '科學基礎減碳目標 (Science Based Targets)',      '技術'),
-    ('SBTi',    '科學基礎減碳目標倡議組織 (SBTi)',                '組織'),
-    ('TCFD',    '氣候相關財務揭露 (TCFD)',                        '技術'),
-    ('ISSB',    '國際永續準則理事會 (ISSB)',                      '組織'),
-    ('ESG',     '環境、社會與治理 (ESG)',                         '技術'),
-    ('CSRD',    '企業永續報告指令 (CSRD)',                        '技術'),
-    ('RE100',   '再生能源100% (RE100)',                          '技術'),
-    ('CBAM',    '碳邊境調整機制 (CBAM)',                          '技術'),
-    ('GRI',     '全球報告倡議組織 (GRI)',                         '組織'),
-    ('CDP',     '碳揭露計畫 (CDP)',                              '組織'),
-    ('EBITDA',  '稅息折舊及攤銷前利潤 (EBITDA)',                  '技術')
-ON CONFLICT (term) DO NOTHING;
-
--- ==========================================
--- 4) RPC：純向量搜尋（支援語言篩選）
--- ==========================================
+-- 1) 重建 match_chunks：加入 category, language, fiscal_year, status, confidentiality, tags, publish_date
 CREATE OR REPLACE FUNCTION match_chunks(
     query_embedding vector(768),
     match_count     INT   DEFAULT 5,
@@ -141,9 +52,8 @@ BEGIN
 END;
 $$;
 
--- ==========================================
--- 5) RPC：混合搜尋 (Vector + FTS + RRF)（支援語言篩選）
--- ==========================================
+
+-- 2) 重建 match_chunks_hybrid：加入相同欄位
 CREATE OR REPLACE FUNCTION match_chunks_hybrid(
     query_embedding vector(768),
     query_text      TEXT,
