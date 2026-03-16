@@ -4,7 +4,11 @@
 -- 在 Supabase SQL Editor 中執行
 -- ==========================================
 
--- 1) 重建 match_chunks：加入 category, language, fiscal_year, status, confidentiality, tags, publish_date
+-- 1) 先刪除舊版函式（因回傳型別改變，無法直接 CREATE OR REPLACE）
+DROP FUNCTION IF EXISTS match_chunks(vector, integer, double precision, text);
+DROP FUNCTION IF EXISTS match_chunks_hybrid(vector, text, integer, double precision, integer, text);
+
+-- 2) 重建 match_chunks：加入 category, language, fiscal_year, status, confidentiality, tags, publish_date
 CREATE OR REPLACE FUNCTION match_chunks(
     query_embedding vector(768),
     match_count     INT   DEFAULT 5,
