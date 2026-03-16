@@ -1,14 +1,31 @@
 """
 config.py — 讀取環境變數與全域常數
+
+支援三種來源（優先順序）：
+  1. Streamlit Cloud secrets (st.secrets)
+  2. 環境變數 / .env 檔案
 """
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _get_secret(key: str, default: str = "") -> str:
+    """先從 Streamlit secrets 取值，再從環境變數取值。"""
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
 # ── Supabase ──────────────────────────────────────────
-SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_URL: str = _get_secret("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY: str = _get_secret("SUPABASE_SERVICE_ROLE_KEY")
+
 
 # ── Monkey Patch Supabase JWT Check ───────────────────
 # 因應 Supabase 推出新的 Token 格式 (sb_secret_... / sb_publishable_...)
@@ -43,7 +60,7 @@ except (ImportError, AttributeError):
     pass
 
 # ── Gemini API ────────────────────────────────────────
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY: str = _get_secret("GEMINI_API_KEY")
 
 # ── Embedding 設定 ────────────────────────────────────
 EMBEDDING_MODEL: str = "gemini-embedding-001"    # Google Gemini 嵌入模型

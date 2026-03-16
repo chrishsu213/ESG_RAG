@@ -40,6 +40,48 @@ st.set_page_config(
     layout="wide",
 )
 
+
+# ── 密碼保護 ──────────────────────────────────────────
+def _get_admin_password() -> str:
+    """取得管理員密碼（優先 st.secrets，其次環境變數）。"""
+    try:
+        if "ADMIN_PASSWORD" in st.secrets:
+            return str(st.secrets["ADMIN_PASSWORD"])
+    except Exception:
+        pass
+    return os.getenv("ADMIN_PASSWORD", "")
+
+
+def check_password() -> bool:
+    """顯示登入表單並驗證密碼。若未設定密碼則直接放行。"""
+    admin_pw = _get_admin_password()
+    if not admin_pw:
+        return True  # 未設定密碼 → 開發模式，直接放行
+
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("## 🔐 管理員登入")
+    st.markdown("請輸入管理密碼以存取管理後台。")
+
+    with st.form("login_form"):
+        password = st.text_input("密碼", type="password")
+        submitted = st.form_submit_button("登入", type="primary")
+
+    if submitted:
+        if password == admin_pw:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("❌ 密碼錯誤")
+
+    st.stop()
+
+
+if not check_password():
+    st.stop()
+
+
 # ── 分類常數 ──────────────────────────────────────────
 CATEGORY_OPTIONS = ["官網", "ESG專區", "電子報", "新聞", "永續報告書", "年度報告", "財務報告", "公司政策", "會議紀錄", "法說會", "其他"]
 LANGUAGE_OPTIONS = ["zh-TW", "en", "ja", "zh-CN"]

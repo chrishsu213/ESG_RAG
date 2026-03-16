@@ -1,6 +1,7 @@
 # 敏感檔案
 .env
 .env.*
+.streamlit/secrets.toml
 
 # Python
 __pycache__/
