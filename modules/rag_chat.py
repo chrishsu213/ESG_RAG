@@ -379,24 +379,43 @@ class RagChat:
                 # 串流結束後，將完整回答 + token 用量記錄到 LangSmith
                 full_answer = "".join(collected_text)
                 try:
-                    from langsmith import Client as LsClient
                     import os
                     if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
+                        import uuid
+                        from datetime import datetime, timezone
+                        from langsmith import Client as LsClient
+
                         ls = LsClient()
+                        run_id = uuid.uuid4()
+                        now = datetime.now(timezone.utc)
+
+                        # 建立 usage_metadata（LangSmith 格式）
+                        usage_meta = None
+                        if token_usage:
+                            usage_meta = {
+                                "input_tokens": token_usage.get("prompt_tokens", 0),
+                                "output_tokens": token_usage.get("completion_tokens", 0),
+                                "total_tokens": token_usage.get("total_tokens", 0),
+                            }
+
                         ls.create_run(
-                            name="llm_stream_output",
+                            name="llm_generate",
                             run_type="llm",
-                            inputs={"question": question, "model": self._CHAT_MODEL},
+                            id=run_id,
+                            inputs={"question": question},
                             outputs={
                                 "answer": full_answer,
-                                "answer_length": len(full_answer),
-                                "token_usage": token_usage,
                             },
-                            extra={"tokens": token_usage} if token_usage else {},
+                            extra={
+                                "metadata": {"model": self._CHAT_MODEL},
+                                "usage_metadata": usage_meta,
+                            } if usage_meta else {"metadata": {"model": self._CHAT_MODEL}},
+                            start_time=now,
+                            end_time=now,
                             project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
                         )
-                except Exception:
-                    pass  # 追蹤失敗不影響使用者
+                except Exception as e:
+                    logger.debug(f"[RAG] LangSmith 追蹤記錄失敗：{e}")
 
         return {
             "sources": sources,
