@@ -432,29 +432,29 @@ class RagChat:
                             "total_tokens": getattr(um, "total_token_count", 0) or 0,
                         }
             finally:
-                # 串流結束後，記錄 token 用量到 DB + LangSmith
-                full_answer = "".join(collected_text)
-
-                # 計算 token
-                input_tokens = 0
+                # 串流結束後，記錄 token 用量（任何追蹤失敗都不影響使用者）
                 try:
-                    count_result = self._genai.models.count_tokens(
-                        model=self._CHAT_MODEL, contents=messages,
+                    full_answer = "".join(collected_text)
+
+                    # 計算 token
+                    input_tokens = 0
+                    try:
+                        count_result = self._genai.models.count_tokens(
+                            model=self._CHAT_MODEL, contents=messages,
+                        )
+                        input_tokens = count_result.total_tokens
+                    except Exception:
+                        pass
+                    output_tokens = token_usage.get("completion_tokens") or max(1, len(full_answer) // 2)
+
+                    # 寫入 DB
+                    self._log_usage(
+                        source=source, question=question, model=self._CHAT_MODEL,
+                        input_tokens=input_tokens, output_tokens=output_tokens,
+                        search_mode=search_mode, fiscal_year=fiscal_year,
                     )
-                    input_tokens = count_result.total_tokens
-                except Exception:
-                    pass
-                output_tokens = token_usage.get("completion_tokens") or max(1, len(full_answer) // 2)
 
-                # 寫入 DB
-                self._log_usage(
-                    source=source, question=question, model=self._CHAT_MODEL,
-                    input_tokens=input_tokens, output_tokens=output_tokens,
-                    search_mode=search_mode, fiscal_year=fiscal_year,
-                )
-
-                # LangSmith 追蹤（簡化版，只記錄回答內容）
-                try:
+                    # LangSmith 追蹤
                     import os
                     if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
                         import uuid
@@ -474,7 +474,7 @@ class RagChat:
                             project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
                         )
                 except Exception:
-                    pass
+                    pass  # 追蹤失敗絕不影響使用者體驗
 
         return {
             "sources": sources,
