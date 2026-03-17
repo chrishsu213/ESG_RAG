@@ -205,3 +205,130 @@ class RagChat:
             ),
         )
         return response.text.strip()
+
+    # ── 串流問答 ─────────────────────────────────────
+    def ask_stream(
+        self,
+        question: str,
+        history: list[dict[str, str]] | None = None,
+        search_mode: str = "hybrid",
+        top_k: int = 5,
+        language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        串流版 RAG 問答。回傳 dict 包含：
+        - sources: list[dict] (引用的來源資訊)
+        - search_results: list[dict] (原始搜尋結果)
+        - stream: Generator[str] (逐 token 產出答案文字)
+        """
+        # 1) 搜尋相關 chunks（同步完成）
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year)
+
+        if search_mode == "hybrid_rerank" and results:
+            results = self._retriever.rerank(question, results, top_k=top_k)
+        else:
+            results = results[:top_k]
+
+        if not results:
+            def empty_stream():
+                yield "根據目前資料庫中的資料，無法找到與您問題相關的資訊。請嘗試更換關鍵字，或確認相關文件已入庫。"
+            return {
+                "sources": [],
+                "search_results": [],
+                "stream": empty_stream(),
+            }
+
+        # 2) 組合參考資料（同 ask() 邏輯）
+        context_parts = []
+        sources = []
+        for i, r in enumerate(results, 1):
+            meta = r.get("metadata") or {}
+            doc_name = r.get("display_name") or r.get("file_name", "未知文件")
+            source_info = {
+                "index": i,
+                "document_name": doc_name,
+                "file_name": r.get("file_name", ""),
+                "section_title": meta.get("section_title", ""),
+                "page_start": meta.get("page_start"),
+                "page_end": meta.get("page_end"),
+                "report_group": r.get("report_group", ""),
+                "similarity": r.get("similarity", 0),
+                "search_type": r.get("search_type", "vector"),
+            }
+            sources.append(source_info)
+
+            page_info = ""
+            if meta.get("page_start"):
+                ps = meta["page_start"]
+                pe = meta.get("page_end")
+                page_info = f" （第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+
+            context_parts.append(
+                f"[來源{i}] 文件：{doc_name}{page_info}\n"
+                f"章節：{meta.get('section_title', '無')}\n"
+                f"內容：{r['text_content']}\n"
+            )
+
+        context = "\n---\n".join(context_parts)
+
+        # 3) 組合訊息
+        messages = [
+            types.Content(
+                role="user",
+                parts=[types.Part(text=self._SYSTEM_PROMPT)],
+            ),
+            types.Content(
+                role="model",
+                parts=[types.Part(text="好的，我會嚴格根據提供的參考資料回答，並標註出處。")],
+            ),
+        ]
+
+        if history:
+            for msg in history[-6:]:
+                role = "model" if msg["role"] == "assistant" else "user"
+                messages.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part(text=msg["content"])],
+                    )
+                )
+
+        user_prompt = f"""以下是從知識庫中搜尋到的參考資料：
+
+<context>
+{context}
+</context>
+
+使用者問題：
+<user_query>
+{question}
+</user_query>
+
+請根據 <context> 內的參考資料回答，並在引用處標註 [來源N]。"""
+
+        messages.append(
+            types.Content(
+                role="user",
+                parts=[types.Part(text=user_prompt)],
+            )
+        )
+
+        # 4) 建立串流 generator
+        def token_stream():
+            response = self._genai.models.generate_content_stream(
+                model=self._CHAT_MODEL,
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                ),
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+
+        return {
+            "sources": sources,
+            "search_results": results,
+            "stream": token_stream(),
+        }

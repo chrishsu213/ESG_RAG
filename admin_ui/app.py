@@ -1123,28 +1123,29 @@ elif page == "💬 AI 問答":
         
         # 生成 AI 回答
         with st.chat_message("assistant"):
-            with st.spinner("搜尋知識庫並生成答案中..."):
-                rag = RagChat(client, api_key=GEMINI_API_KEY)
-                
-                # 傳入歷史對話（不含來源資訊）
-                history_for_rag = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state["chat_history"][:-1]  # 排除剛加入的
-                ]
-                
-                result = rag.ask(
+            rag = RagChat(client, api_key=GEMINI_API_KEY)
+            
+            # 傳入歷史對話（不含來源資訊）
+            history_for_rag = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state["chat_history"][:-1]  # 排除剛加入的
+            ]
+            
+            # 串流搜尋 + 生成
+            with st.spinner("搜尋知識庫中..."):
+                result = rag.ask_stream(
                     question=prompt,
                     history=history_for_rag,
                     search_mode=search_mode,
                     top_k=chat_top_k,
                     fiscal_year=chat_fiscal_year.strip() or None,
                 )
+                sources = result["sources"]
             
-            # 顯示答案
-            st.markdown(result["answer"])
+            # 串流輸出答案（逐 token 顯示）
+            answer_text = st.write_stream(result["stream"])
             
             # 顯示來源
-            sources = result["sources"]
             if sources:
                 with st.expander(f"📚 引用來源 ({len(sources)} 筆)", expanded=False):
                     for src in sources:
@@ -1166,7 +1167,7 @@ elif page == "💬 AI 問答":
             # 儲存助手回答到歷史
             st.session_state["chat_history"].append({
                 "role": "assistant",
-                "content": result["answer"],
+                "content": answer_text,
                 "sources": sources,
             })
 
