@@ -258,161 +258,289 @@ elif page == "📤 上傳與匯入":
     # 子分頁 1：PDF / Word
     # ─────────────────────────────────────────────
     with sub_tab1:
-        uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"])
-        
-        # PDF 專用選項
-        pdf_mode = "text"
-        if uploaded_file and uploaded_file.name.lower().endswith(".pdf"):
-            col_mode, col_offset = st.columns([3, 1])
-            with col_mode:
-                pdf_mode = st.radio(
-                    "PDF 解析模式",
-                    ["text", "auto", "vision", "vision_pdf"],
-                    index=3,
-                    format_func=lambda x: {
-                        "text": "📝 純文字（免費）",
-                        "auto": "✨ 智能混合",
-                        "vision": "👁️ 逐頁 Vision",
-                        "vision_pdf": "📄 整份 PDF 上傳（推薦）",
-                    }[x],
-                    key="pdf_mode",
-                    horizontal=True,
-                )
-            with col_offset:
-                page_offset = st.number_input(
-                    "頁碼偏移",
-                    min_value=0, value=0, step=1,
-                    key="page_offset",
-                    help="整份上傳填 0。拆章節時填起始頁碼 -1。"
-                )
-        
-        if uploaded_file and st.button("🔍 解析並預覽", type="primary", key="parse_preview"):
-            os.makedirs(RAW_DATA_DIR, exist_ok=True)
-            # 使用 uuid4 重命名避免 Path Traversal 攻擊
-            safe_ext = os.path.splitext(uploaded_file.name)[1].lower()
-            temp_path = os.path.join(RAW_DATA_DIR, f"{uuid.uuid4().hex}{safe_ext}")
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+        upload_mode = st.radio(
+            "上傳模式",
+            ["single", "batch"],
+            format_func=lambda x: {"single": "📄 單檔模式（可預覽編輯）", "batch": "📦 批次模式（多檔自動處理）"}[x],
+            horizontal=True,
+            key="upload_mode",
+        )
+
+        # ═══════════════════════════════════════════
+        # 單檔模式（原有流程）
+        # ═══════════════════════════════════════════
+        if upload_mode == "single":
+            uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"], key="single_uploader")
             
-            parse_progress = st.progress(0, text="正在解析...")
+            # PDF 專用選項
+            pdf_mode = "text"
+            if uploaded_file and uploaded_file.name.lower().endswith(".pdf"):
+                col_mode, col_offset = st.columns([3, 1])
+                with col_mode:
+                    pdf_mode = st.radio(
+                        "PDF 解析模式",
+                        ["text", "auto", "vision", "vision_pdf"],
+                        index=3,
+                        format_func=lambda x: {
+                            "text": "📝 純文字（免費）",
+                            "auto": "✨ 智能混合",
+                            "vision": "👁️ 逐頁 Vision",
+                            "vision_pdf": "📄 整份 PDF 上傳（推薦）",
+                        }[x],
+                        key="pdf_mode",
+                        horizontal=True,
+                    )
+                with col_offset:
+                    page_offset = st.number_input(
+                        "頁碼偏移",
+                        min_value=0, value=0, step=1,
+                        key="page_offset",
+                        help="整份上傳填 0。拆章節時填起始頁碼 -1。"
+                    )
             
-            if uploaded_file.name.lower().endswith(".pdf"):
-                def on_pdf_progress(current, total, mode):
-                    pct = int((current / total) * 100)
-                    parse_progress.progress(pct, text=f"[{mode}] 第 {current}/{total} 頁")
+            if uploaded_file and st.button("🔍 解析並預覽", type="primary", key="parse_preview"):
+                os.makedirs(RAW_DATA_DIR, exist_ok=True)
+                # 使用 uuid4 重命名避免 Path Traversal 攻擊
+                safe_ext = os.path.splitext(uploaded_file.name)[1].lower()
+                temp_path = os.path.join(RAW_DATA_DIR, f"{uuid.uuid4().hex}{safe_ext}")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
                 
-                parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress, api_key=GEMINI_API_KEY)
-                raw_md = parser.parse(temp_path)
+                parse_progress = st.progress(0, text="正在解析...")
                 
-                stats = parser.stats
-                st.caption(
-                    f"📊 解析統計：總頁數 {stats['total_pages']} | "
-                    f"文字 {stats['text_pages']} 頁 | "
-                    f"Vision {stats['vision_pages']} 頁 | "
-                    f"跳過 {stats['skipped_pages']} 頁"
-                )
-            else:
-                raw_md = DocxParser().parse(temp_path)
-            
-            parse_progress.progress(100, text="解析完成！")
-            cleaned_md = MarkdownCleaner().clean(raw_md)
-            
-            st.session_state["draft_md"] = cleaned_md
-            st.session_state["draft_path"] = temp_path
-            st.session_state["draft_filename"] = uploaded_file.name
-            st.session_state["draft_page_offset"] = page_offset if uploaded_file.name.lower().endswith(".pdf") else 0
-        
-        # ── 草稿預覽與校對 ─────────────────────
-        if "draft_md" in st.session_state:
-            st.divider()
-            st.markdown(f"#### 📝 草稿預覽 — {st.session_state.get('draft_filename', '')}")
-            st.caption(f"共 {len(st.session_state['draft_md'])} 字元")
-            
-            col_ai, col_clear = st.columns([1, 1])
-            with col_ai:
-                if st.button("🤖 AI 自動校對", key="ai_proofread"):
-                    with st.spinner("正在 AI 校對中，請稍候..."):
-                        proofreader = AiProofreader(api_key=GEMINI_API_KEY)
-                        st.session_state["draft_md"] = proofreader.proofread(st.session_state["draft_md"])
-                        st.toast("✅ AI 校對完成！")
-                        st.rerun()
-            with col_clear:
-                if st.button("❌ 放棄草稿", key="discard_draft"):
-                    # 清理磁碟上的暫存檔
-                    draft_path = st.session_state.get("draft_path")
-                    if draft_path and os.path.exists(draft_path):
-                        os.remove(draft_path)
-                    for key in ["draft_md", "draft_path", "draft_filename", "draft_page_offset"]:
-                        st.session_state.pop(key, None)
-                    st.rerun()
-            
-            edited_md = st.text_area(
-                "可直接編輯內容",
-                value=st.session_state["draft_md"],
-                height=400,
-                key="draft_editor"
-            )
-            
-            if st.button("✅ 確認入庫", type="primary", key="confirm_ingest"):
-                progress = st.progress(0, text="正在處理...")
-                
-                uploader = Uploader(client)
-                doc_info = uploader.process(st.session_state["draft_path"])
-                if doc_info is None:
-                    st.warning("⚠️ 此文件已存在於資料庫中。")
-                    progress.empty()
+                if uploaded_file.name.lower().endswith(".pdf"):
+                    def on_pdf_progress(current, total, mode):
+                        pct = int((current / total) * 100)
+                        parse_progress.progress(pct, text=f"[{mode}] 第 {current}/{total} 頁")
+                    
+                    parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress, api_key=GEMINI_API_KEY)
+                    raw_md = parser.parse(temp_path)
+                    
+                    stats = parser.stats
+                    st.caption(
+                        f"📊 解析統計：總頁數 {stats['total_pages']} | "
+                        f"文字 {stats['text_pages']} 頁 | "
+                        f"Vision {stats['vision_pages']} 頁 | "
+                        f"跳過 {stats['skipped_pages']} 頁"
+                    )
                 else:
-                    progress.progress(30, text="切割中...")
-                    chunks = SemanticChunker().chunk(edited_md)
-                    
-                    # 套用頁碼偏移
-                    offset = st.session_state.get("draft_page_offset", 0)
-                    if offset > 0:
-                        for c in chunks:
-                            meta = c.get("metadata", {})
-                            if meta.get("page_start") is not None:
-                                meta["page_start"] += offset
-                            if meta.get("page_end") is not None:
-                                meta["page_end"] += offset
-                    
-                    embeddings = None
-                    if GEMINI_API_KEY and chunks:
-                        progress.progress(50, text=f"向量嵌入中 ({len(chunks)} 段)...")
-                        embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
-                        texts = [c["text_content"] for c in chunks]
-                        try:
-                            embeddings = embedder.embed_batch(texts)
-                        except Exception as e:
-                            st.error(f"向量產生失敗：{e}")
-                            progress.empty()
-                    
-                    if chunks:
-                        progress.progress(80, text="寫入資料庫...")
-                        exporter = SupabaseExporter(client)
-                        # 使用原始中文檔名（而非 uuid 暫存檔名）
-                        original_filename = st.session_state.get("draft_filename", doc_info["file_name"])
-                        final_name = upload_display_name.strip() if upload_display_name.strip() else os.path.splitext(original_filename)[0]
-                        rg = upload_report_group.strip() if upload_report_group.strip() else None
-                        doc_id = exporter.insert_document(
-                            original_filename,
-                            doc_info["file_hash"],
-                            doc_info["source_type"],
-                            category=upload_category,
-                            display_name=final_name,
-                            report_group=rg,
-                        )
-                        exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
-                        
-                        progress.progress(100, text="完成！")
-                        group_info = f" [報告: {rg}]" if rg else ""
-                        st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({len(chunks)} 段)")
-                        
+                    raw_md = DocxParser().parse(temp_path)
+                
+                parse_progress.progress(100, text="解析完成！")
+                cleaned_md = MarkdownCleaner().clean(raw_md)
+                
+                st.session_state["draft_md"] = cleaned_md
+                st.session_state["draft_path"] = temp_path
+                st.session_state["draft_filename"] = uploaded_file.name
+                st.session_state["draft_page_offset"] = page_offset if uploaded_file.name.lower().endswith(".pdf") else 0
+            
+            # ── 草稿預覽與校對 ─────────────────────
+            if "draft_md" in st.session_state:
+                st.divider()
+                st.markdown(f"#### 📝 草稿預覽 — {st.session_state.get('draft_filename', '')}")
+                st.caption(f"共 {len(st.session_state['draft_md'])} 字元")
+                
+                col_ai, col_clear = st.columns([1, 1])
+                with col_ai:
+                    if st.button("🤖 AI 自動校對", key="ai_proofread"):
+                        with st.spinner("正在 AI 校對中，請稍候..."):
+                            proofreader = AiProofreader(api_key=GEMINI_API_KEY)
+                            st.session_state["draft_md"] = proofreader.proofread(st.session_state["draft_md"])
+                            st.toast("✅ AI 校對完成！")
+                            st.rerun()
+                with col_clear:
+                    if st.button("❌ 放棄草稿", key="discard_draft"):
                         # 清理磁碟上的暫存檔
                         draft_path = st.session_state.get("draft_path")
                         if draft_path and os.path.exists(draft_path):
                             os.remove(draft_path)
                         for key in ["draft_md", "draft_path", "draft_filename", "draft_page_offset"]:
                             st.session_state.pop(key, None)
+                        st.rerun()
+                
+                edited_md = st.text_area(
+                    "可直接編輯內容",
+                    value=st.session_state["draft_md"],
+                    height=400,
+                    key="draft_editor"
+                )
+                
+                if st.button("✅ 確認入庫", type="primary", key="confirm_ingest"):
+                    progress = st.progress(0, text="正在處理...")
+                    
+                    uploader = Uploader(client)
+                    doc_info = uploader.process(st.session_state["draft_path"])
+                    if doc_info is None:
+                        st.warning("⚠️ 此文件已存在於資料庫中。")
+                        progress.empty()
+                    else:
+                        progress.progress(30, text="切割中...")
+                        chunks = SemanticChunker().chunk(edited_md)
+                        
+                        # 套用頁碼偏移
+                        offset = st.session_state.get("draft_page_offset", 0)
+                        if offset > 0:
+                            for c in chunks:
+                                meta = c.get("metadata", {})
+                                if meta.get("page_start") is not None:
+                                    meta["page_start"] += offset
+                                if meta.get("page_end") is not None:
+                                    meta["page_end"] += offset
+                        
+                        embeddings = None
+                        if GEMINI_API_KEY and chunks:
+                            progress.progress(50, text=f"向量嵌入中 ({len(chunks)} 段)...")
+                            embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+                            texts = [c["text_content"] for c in chunks]
+                            try:
+                                embeddings = embedder.embed_batch(texts)
+                            except Exception as e:
+                                st.error(f"向量產生失敗：{e}")
+                                progress.empty()
+                        
+                        if chunks:
+                            progress.progress(80, text="寫入資料庫...")
+                            exporter = SupabaseExporter(client)
+                            # 使用原始中文檔名（而非 uuid 暫存檔名）
+                            original_filename = st.session_state.get("draft_filename", doc_info["file_name"])
+                            final_name = upload_display_name.strip() if upload_display_name.strip() else os.path.splitext(original_filename)[0]
+                            rg = upload_report_group.strip() if upload_report_group.strip() else None
+                            doc_id = exporter.insert_document(
+                                original_filename,
+                                doc_info["file_hash"],
+                                doc_info["source_type"],
+                                category=upload_category,
+                                display_name=final_name,
+                                report_group=rg,
+                            )
+                            exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+                            
+                            progress.progress(100, text="完成！")
+                            group_info = f" [報告: {rg}]" if rg else ""
+                            st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({len(chunks)} 段)")
+                            
+                            # 清理磁碟上的暫存檔
+                            draft_path = st.session_state.get("draft_path")
+                            if draft_path and os.path.exists(draft_path):
+                                os.remove(draft_path)
+                            for key in ["draft_md", "draft_path", "draft_filename", "draft_page_offset"]:
+                                st.session_state.pop(key, None)
+
+        # ═══════════════════════════════════════════
+        # 批次模式（多檔自動處理）
+        # ═══════════════════════════════════════════
+        else:
+            st.info("📦 批次模式：一次上傳多個 PDF / DOCX 檔案，系統將自動依序處理（解析→清洗→切割→嵌入→入庫），不進入預覽編輯流程。")
+            
+            batch_pdf_mode = st.radio(
+                "PDF 解析模式（套用至所有 PDF）",
+                ["text", "auto", "vision", "vision_pdf"],
+                index=3,
+                format_func=lambda x: {
+                    "text": "📝 純文字（免費）",
+                    "auto": "✨ 智能混合",
+                    "vision": "👁️ 逐頁 Vision",
+                    "vision_pdf": "📄 整份 PDF 上傳（推薦）",
+                }[x],
+                key="batch_pdf_mode",
+                horizontal=True,
+            )
+            
+            batch_files = st.file_uploader(
+                "拖放或選擇多個 PDF / DOCX 檔案",
+                type=["pdf", "docx", "doc"],
+                accept_multiple_files=True,
+                key="batch_uploader",
+            )
+            
+            if batch_files and st.button(f"🚀 開始處理 {len(batch_files)} 個檔案", type="primary", key="batch_start"):
+                os.makedirs(RAW_DATA_DIR, exist_ok=True)
+                
+                results_container = st.container()
+                overall_progress = st.progress(0, text="準備中...")
+                
+                success_count = 0
+                skip_count = 0
+                fail_count = 0
+                
+                for idx, bf in enumerate(batch_files):
+                    file_label = bf.name
+                    pct = int(((idx) / len(batch_files)) * 100)
+                    overall_progress.progress(pct, text=f"處理中 ({idx+1}/{len(batch_files)})：{file_label}")
+                    
+                    temp_path = None
+                    try:
+                        # 1) 暫存
+                        safe_ext = os.path.splitext(bf.name)[1].lower()
+                        temp_path = os.path.join(RAW_DATA_DIR, f"{uuid.uuid4().hex}{safe_ext}")
+                        with open(temp_path, "wb") as f:
+                            f.write(bf.getbuffer())
+                        
+                        # 2) 去重
+                        uploader_obj = Uploader(client)
+                        doc_info = uploader_obj.process(temp_path)
+                        if doc_info is None:
+                            skip_count += 1
+                            results_container.warning(f"⏭️ {file_label} — 已存在，跳過")
+                            continue
+                        
+                        # 3) 解析
+                        if safe_ext == ".pdf":
+                            parser = VisionPdfParser(mode=batch_pdf_mode, api_key=GEMINI_API_KEY)
+                            raw_md = parser.parse(temp_path)
+                        else:
+                            raw_md = DocxParser().parse(temp_path)
+                        
+                        # 4) 清洗 + 切割
+                        cleaned_md = MarkdownCleaner().clean(raw_md)
+                        chunks = SemanticChunker().chunk(cleaned_md)
+                        
+                        if not chunks:
+                            fail_count += 1
+                            results_container.error(f"❌ {file_label} — 解析後無有效內容")
+                            continue
+                        
+                        # 5) 嵌入
+                        embeddings = None
+                        if GEMINI_API_KEY:
+                            embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+                            texts = [c["text_content"] for c in chunks]
+                            embeddings = embedder.embed_batch(texts)
+                        
+                        # 6) 寫入 DB
+                        exporter = SupabaseExporter(client)
+                        display = upload_display_name.strip() if upload_display_name.strip() else os.path.splitext(bf.name)[0]
+                        rg = upload_report_group.strip() if upload_report_group.strip() else None
+                        doc_id = exporter.insert_document(
+                            bf.name,
+                            doc_info["file_hash"],
+                            doc_info["source_type"],
+                            category=upload_category,
+                            display_name=display if len(batch_files) == 1 else os.path.splitext(bf.name)[0],
+                            report_group=rg,
+                        )
+                        exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+                        
+                        success_count += 1
+                        results_container.success(f"✅ {file_label} — {len(chunks)} 段已入庫")
+                    
+                    except Exception as e:
+                        fail_count += 1
+                        results_container.error(f"❌ {file_label} — 失敗：{e}")
+                    
+                    finally:
+                        # 清理暫存檔
+                        if temp_path and os.path.exists(temp_path):
+                            os.remove(temp_path)
+                
+                overall_progress.progress(100, text="全部完成！")
+                st.divider()
+                st.markdown(
+                    f"### 📊 批次處理結果\n"
+                    f"- ✅ 成功：**{success_count}** 個\n"
+                    f"- ⏭️ 跳過（重複）：**{skip_count}** 個\n"
+                    f"- ❌ 失敗：**{fail_count}** 個"
+                )
     
     # ─────────────────────────────────────────────
     # 子分頁 2：網頁爬蟲
