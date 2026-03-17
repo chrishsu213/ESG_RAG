@@ -1074,6 +1074,12 @@ elif page == "💬 AI 問答":
             help="混合搜尋結合向量語義和關鍵字匹配。AI 精排會多一次 API 呼叫。"
         )
         chat_top_k = st.slider("參考段落數", 3, 10, 5, key="chat_top_k")
+        chat_fiscal_year = st.text_input(
+            "📅 限定會計年度",
+            placeholder="如 2024，留空不限",
+            key="chat_fiscal_year",
+            help="指定會計年度範圍，如 2024。留空則搜尋所有年度（較新的自動排前）。"
+        )
         
         if st.button("🗑️ 清除對話", key="clear_chat"):
             st.session_state["chat_history"] = []
@@ -1131,6 +1137,7 @@ elif page == "💬 AI 問答":
                     history=history_for_rag,
                     search_mode=search_mode,
                     top_k=chat_top_k,
+                    fiscal_year=chat_fiscal_year.strip() or None,
                 )
             
             # 顯示答案

@@ -75,6 +75,7 @@ class SearchRequest(BaseModel):
     threshold: float = Field(0.3, ge=0, le=1, description="最低相似度門檻")
     use_hybrid: bool = Field(True, description="是否使用混合搜尋")
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'、'zh-TW'），Null 則不限")
+    fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
 
 
 class AskRequest(BaseModel):
@@ -85,6 +86,7 @@ class AskRequest(BaseModel):
         description="搜尋模式：'hybrid' 或 'hybrid_rerank'"
     )
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'），Null 則不限")
+    fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
     history: Optional[list[dict]] = Field(
         None,
         description="對話歷史，格式 [{role: 'user'|'assistant', content: '...'}]"
@@ -201,12 +203,12 @@ def search(req: SearchRequest, _=Depends(verify_api_key)):
         if req.use_hybrid:
             results = retriever.hybrid_search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
-                language=req.language,
+                language=req.language, fiscal_year=req.fiscal_year,
             )
         else:
             results = retriever.search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
-                language=req.language,
+                language=req.language, fiscal_year=req.fiscal_year,
             )
 
         items = []
@@ -251,6 +253,7 @@ def ask(req: AskRequest, _=Depends(verify_api_key)):
             search_mode=req.search_mode,
             top_k=req.top_k,
             language=req.language,
+            fiscal_year=req.fiscal_year,
         )
         return AskResponse(
             answer=result["answer"],

@@ -59,6 +59,7 @@ class RagChat:
         search_mode: str = "hybrid",
         top_k: int = 5,
         language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         RAG 問答。
@@ -75,6 +76,8 @@ class RagChat:
             搜尋結果數量。
         language : str | None
             限制搜尋語言（如 "en"），None 則不限。
+        fiscal_year : str | None
+            限制會計年度（如 "2024"），None 則不限。
 
         Returns
         -------
@@ -84,7 +87,7 @@ class RagChat:
             - search_results: list[dict] (原始搜尋結果)
         """
         # 1) 搜尋相關 chunks
-        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language)
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year)
 
         # 2) 如果啟用 re-ranking，精排結果
         if search_mode == "hybrid_rerank" and results:

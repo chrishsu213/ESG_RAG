@@ -5,6 +5,8 @@ modules/retriever.py — 語義搜尋 / 混合搜尋 / Re-ranking 模組
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from typing import Any, Optional
 
 from google import genai
@@ -55,9 +57,11 @@ class SemanticRetriever:
         top_k: int = 5,
         threshold: float = 0.5,
         language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """純向量語義搜尋（使用 match_chunks RPC）。
         language: 若指定（如 'en'），只搜該語言的文件。
+        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
         """
         query_embedding = self._embed_query(query)
         params = {
@@ -67,8 +71,10 @@ class SemanticRetriever:
         }
         if language:
             params["filter_language"] = language
+        if fiscal_year:
+            params["filter_fiscal_year"] = fiscal_year
         result = self._client.rpc("match_chunks", params).execute()
-        return result.data or []
+        return self._apply_time_weight(result.data or [])
 
     # ── 混合搜尋 ───────────────────────────────────────
     def hybrid_search(
@@ -77,9 +83,11 @@ class SemanticRetriever:
         top_k: int = 5,
         threshold: float = 0.3,
         language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。
         language: 若指定（如 'en'），只搜該語言的文件。
+        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
         如果 hybrid RPC 尚未建立，自動退回純向量搜尋。
         """
         query_embedding = self._embed_query(query)
@@ -91,13 +99,15 @@ class SemanticRetriever:
         }
         if language:
             params["filter_language"] = language
+        if fiscal_year:
+            params["filter_fiscal_year"] = fiscal_year
         try:
             result = self._client.rpc("match_chunks_hybrid", params).execute()
-            return result.data or []
+            return self._apply_time_weight(result.data or [])
         except Exception as e:
             if "match_chunks_hybrid" in str(e):
                 print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
-                return self.search(query, top_k=top_k, threshold=threshold, language=language)
+                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
             raise
 
     # ── Re-ranking ─────────────────────────────────────
@@ -157,3 +167,36 @@ class SemanticRetriever:
         except Exception as e:
             print(f"[RERANK] Re-ranking 失敗，返回原始排序：{e}")
             return results[:top_k]
+
+    # ── 時間加權排序 ───────────────────────────────────
+    @staticmethod
+    def _apply_time_weight(
+        results: list[dict[str, Any]],
+        time_weight: float = 0.1,
+    ) -> list[dict[str, Any]]:
+        """根據 fiscal_year 對搜尋結果做軟排序加權。
+
+        公式：adjusted_score = similarity * (1 - time_weight) + year_score * time_weight
+        year_score = 0~1，當年度為 1.0，每差一年遞減 0.15。
+        """
+        if not results:
+            return results
+
+        current_year = datetime.now().year
+
+        for r in results:
+            fy = r.get("fiscal_year")
+            year_score = 0.5  # 未填年度的預設分數
+            if fy:
+                # 嘗試從 fiscal_year 提取數字年份
+                match = re.search(r"(\d{4})", str(fy))
+                if match:
+                    doc_year = int(match.group(1))
+                    years_diff = max(0, current_year - doc_year)
+                    year_score = max(0, 1.0 - years_diff * 0.15)
+
+            sim = r.get("similarity", 0) or 0
+            r["adjusted_score"] = sim * (1 - time_weight) + year_score * time_weight
+
+        results.sort(key=lambda x: x.get("adjusted_score", 0), reverse=True)
+        return results
