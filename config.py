@@ -4,6 +4,10 @@ config.py — 讀取環境變數與全域常數
 支援兩種來源（優先順序）：
   1. Streamlit Cloud secrets (st.secrets) — 透過 _get_secret() 即時讀取
   2. 環境變數 / .env 檔案
+
+注意：SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY、GEMINI_API_KEY 使用
+     延遲載入（lazy-loading），確保在 Streamlit Cloud 上
+     st.secrets 於首次存取時已經就緒。
 """
 import os
 from dotenv import load_dotenv
@@ -22,12 +26,23 @@ def _get_secret(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
-# ── Supabase（模組層級，供 Cloud Run / CLI 等非 Streamlit 環境使用）──
-SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+# ── 延遲載入密鑰 ──────────────────────────────────────
+# 各模組 import 時不會立即解析密鑰值，而是在首次存取時才呼叫 _get_secret()。
+# 這確保 Streamlit Cloud 的 st.secrets 在讀取時已準備好。
+_SECRET_KEYS = {"SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GEMINI_API_KEY"}
+_resolved_secrets: dict[str, str] = {}
 
 
-
+def __getattr__(name: str) -> str:
+    """Module-level __getattr__：延遲載入密鑰。
+    當其他模組執行 `from config import GEMINI_API_KEY` 時，
+    Python 會呼叫此函式來取得值（僅在模組層級找不到時）。
+    """
+    if name in _SECRET_KEYS:
+        if name not in _resolved_secrets:
+            _resolved_secrets[name] = _get_secret(name)
+        return _resolved_secrets[name]
+    raise AttributeError(f"module 'config' has no attribute {name!r}")
 
 
 # ── Monkey Patch Supabase JWT Check ───────────────────
@@ -61,9 +76,6 @@ try:
 except (ImportError, AttributeError):
     # 新版 supabase-py 結構不同，不需要 monkey patch
     pass
-
-# ── Gemini API ────────────────────────────────────────
-GEMINI_API_KEY: str = _get_secret("GEMINI_API_KEY")
 
 # ── Embedding 設定 ────────────────────────────────────
 EMBEDDING_MODEL: str = "gemini-embedding-001"    # Google Gemini 嵌入模型
