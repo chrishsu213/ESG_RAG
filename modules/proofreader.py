@@ -54,10 +54,11 @@ class AiProofreader:
 原始文本：
 """
 
-    def __init__(self) -> None:
-        if not GEMINI_API_KEY:
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        key = api_key or GEMINI_API_KEY
+        if not key:
             raise ValueError("需要 GEMINI_API_KEY 才能使用 AI 校對功能")
-        self._client = genai.Client(api_key=GEMINI_API_KEY)
+        self._client = genai.Client(api_key=key)
 
     def proofread(
         self,

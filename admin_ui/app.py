@@ -151,7 +151,7 @@ def process_url(url: str, category: str, display_name: str, report_group: str = 
     
     embeddings = None
     if GEMINI_API_KEY:
-        embedder = GeminiEmbedder()
+        embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
         texts = [c["text_content"] for c in chunks]
         embeddings = embedder.embed_batch(texts)
     
@@ -294,7 +294,7 @@ elif page == "📤 上傳與匯入":
                     pct = int((current / total) * 100)
                     parse_progress.progress(pct, text=f"[{mode}] 第 {current}/{total} 頁")
                 
-                parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress)
+                parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress, api_key=GEMINI_API_KEY)
                 raw_md = parser.parse(temp_path)
                 
                 stats = parser.stats
@@ -325,7 +325,7 @@ elif page == "📤 上傳與匯入":
             with col_ai:
                 if st.button("🤖 AI 自動校對", key="ai_proofread"):
                     with st.spinner("正在 AI 校對中，請稍候..."):
-                        proofreader = AiProofreader()
+                        proofreader = AiProofreader(api_key=GEMINI_API_KEY)
                         st.session_state["draft_md"] = proofreader.proofread(st.session_state["draft_md"])
                         st.toast("✅ AI 校對完成！")
                         st.rerun()
@@ -367,7 +367,7 @@ elif page == "📤 上傳與匯入":
                     embeddings = None
                     if GEMINI_API_KEY and chunks:
                         progress.progress(50, text=f"向量嵌入中 ({len(chunks)} 段)...")
-                        embedder = GeminiEmbedder()
+                        embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
                         texts = [c["text_content"] for c in chunks]
                         try:
                             embeddings = embedder.embed_batch(texts)
@@ -637,7 +637,7 @@ elif page == "📤 上傳與匯入":
                             if chunks:
                                 embeddings = None
                                 if GEMINI_API_KEY:
-                                    embedder = GeminiEmbedder()
+                                    embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
                                     texts = [c["text_content"] for c in chunks]
                                     embeddings = embedder.embed_batch(texts)
                                 
@@ -845,7 +845,7 @@ elif page == "🔍 檢索測試":
 
     if submitted and query:
         with st.spinner("搜尋中..."):
-            retriever = SemanticRetriever(client)
+            retriever = SemanticRetriever(client, api_key=GEMINI_API_KEY)
             results = retriever.search(query, top_k=top_k, threshold=threshold)
             
         if not results:
@@ -973,7 +973,7 @@ elif page == "💬 AI 問答":
         # 生成 AI 回答
         with st.chat_message("assistant"):
             with st.spinner("搜尋知識庫並生成答案中..."):
-                rag = RagChat(client)
+                rag = RagChat(client, api_key=GEMINI_API_KEY)
                 
                 # 傳入歷史對話（不含來源資訊）
                 history_for_rag = [
