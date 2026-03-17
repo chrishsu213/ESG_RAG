@@ -389,31 +389,43 @@ class RagChat:
                         from datetime import datetime, timezone
                         from langsmith import Client as LsClient
 
+                        # 用 count_tokens API 精確計算輸入 token
+                        input_tokens = 0
+                        try:
+                            count_result = self._genai.models.count_tokens(
+                                model=self._CHAT_MODEL,
+                                contents=messages,
+                            )
+                            input_tokens = count_result.total_tokens
+                        except Exception:
+                            pass
+
+                        # 輸出 token：優先用 usage_metadata，否則用字數估算
+                        output_tokens = 0
+                        if token_usage.get("completion_tokens"):
+                            output_tokens = token_usage["completion_tokens"]
+                        else:
+                            # 中文約 1.5 字/token，英文約 4 字/token，取平均
+                            output_tokens = max(1, len(full_answer) // 2)
+
                         ls = LsClient()
                         run_id = uuid.uuid4()
                         now = datetime.now(timezone.utc)
-
-                        # 建立 usage_metadata（LangSmith 格式）
-                        usage_meta = None
-                        if token_usage:
-                            usage_meta = {
-                                "input_tokens": token_usage.get("prompt_tokens", 0),
-                                "output_tokens": token_usage.get("completion_tokens", 0),
-                                "total_tokens": token_usage.get("total_tokens", 0),
-                            }
 
                         ls.create_run(
                             name="llm_generate",
                             run_type="llm",
                             id=run_id,
                             inputs={"question": question},
-                            outputs={
-                                "answer": full_answer,
-                            },
+                            outputs={"answer": full_answer},
                             extra={
                                 "metadata": {"model": self._CHAT_MODEL},
-                                "usage_metadata": usage_meta,
-                            } if usage_meta else {"metadata": {"model": self._CHAT_MODEL}},
+                                "usage_metadata": {
+                                    "input_tokens": input_tokens,
+                                    "output_tokens": output_tokens,
+                                    "total_tokens": input_tokens + output_tokens,
+                                },
+                            },
                             start_time=now,
                             end_time=now,
                             project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
