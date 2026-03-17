@@ -228,7 +228,6 @@ class RagChat:
             )
             input_tokens = count_result.total_tokens
             output_tokens = max(1, len(answer) // 2)
-            import time as _time
             self._log_usage(
                 source=source, question=question, model=self._CHAT_MODEL,
                 input_tokens=input_tokens, output_tokens=output_tokens,
