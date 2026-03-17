@@ -34,7 +34,7 @@ class SemanticRetriever:
     """
 
     _RERANK_MODEL = "gemini-3-flash-preview"
-    _EXPAND_MODEL = "gemini-2.0-flash-lite"  # 極快、極便宜，用於查詢展開
+    _EXPAND_MODEL = "gemini-flash-lite-latest"  # 極快、極便宜，用於查詢展開
 
     def __init__(
         self,
