@@ -1,8 +1,8 @@
 """
 config.py — 讀取環境變數與全域常數
 
-支援三種來源（優先順序）：
-  1. Streamlit Cloud secrets (st.secrets)
+支援兩種來源（優先順序）：
+  1. Streamlit Cloud secrets (st.secrets) — 透過 _get_secret() 即時讀取
   2. 環境變數 / .env 檔案
 """
 import os
@@ -12,19 +12,22 @@ load_dotenv()
 
 
 def _get_secret(key: str, default: str = "") -> str:
-    """先從 Streamlit secrets 取值，再從環境變數取值。"""
+    """先從 Streamlit secrets 取值，再從環境變數取值。每次呼叫都即時讀取。"""
     try:
         import streamlit as st
-        if key in st.secrets:
+        if hasattr(st, "secrets") and key in st.secrets:
             return str(st.secrets[key])
     except Exception:
         pass
     return os.getenv(key, default)
 
 
-# ── Supabase ──────────────────────────────────────────
-SUPABASE_URL: str = _get_secret("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY: str = _get_secret("SUPABASE_SERVICE_ROLE_KEY")
+# ── Supabase（模組層級，供 Cloud Run / CLI 等非 Streamlit 環境使用）──
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+
+
 
 
 # ── Monkey Patch Supabase JWT Check ───────────────────

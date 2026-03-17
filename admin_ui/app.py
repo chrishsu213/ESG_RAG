@@ -15,7 +15,7 @@ import streamlit as st
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase import create_client
-from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
+from config import _get_secret
 from modules.uploader import Uploader
 from modules.parser_pdf import PdfParser
 from modules.parser_docx import DocxParser
@@ -29,9 +29,7 @@ from modules.parser_pdf_vision import VisionPdfParser
 from modules.proofreader import AiProofreader
 from modules.rag_chat import RagChat
 from modules.parser_audio import AudioParser
-
-if GEMINI_API_KEY:
-    from modules.embedder import GeminiEmbedder
+from modules.embedder import GeminiEmbedder
 
 # ── 頁面設定 ──────────────────────────────────────────
 st.set_page_config(
@@ -91,12 +89,15 @@ CONFIDENTIALITY_OPTIONS = ["公開", "內部", "機密"]
 # ── Supabase 連線 ─────────────────────────────────────
 @st.cache_resource
 def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+    url = _get_secret("SUPABASE_URL")
+    key = _get_secret("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
         st.error("❌ 系統錯誤：尚未設定 SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY")
         st.stop()
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    return create_client(url, key)
 
 client = init_supabase()
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
 
 # ── 通用函式 ──────────────────────────────────────────
 def fetch_system_stats():
