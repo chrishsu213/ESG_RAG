@@ -60,6 +60,33 @@ class RagChat:
         self._retriever = SemanticRetriever(supabase_client, api_key=key)
         self._supabase = supabase_client
 
+    def _log_usage(
+        self,
+        source: str,
+        question: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        search_mode: str = None,
+        fiscal_year: str = None,
+        latency_ms: int = None,
+    ) -> None:
+        """將 token 用量寫入 usage_log 表（靜默失敗）。"""
+        try:
+            self._supabase.table("usage_log").insert({
+                "source": source,
+                "question": question[:500] if question else "",
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "search_mode": search_mode,
+                "fiscal_year": fiscal_year,
+                "latency_ms": latency_ms,
+            }).execute()
+        except Exception as e:
+            logger.debug(f"[RAG] usage_log 寫入失敗：{e}")
+
     @traceable(name="rag_ask")
     def ask(
         self,
@@ -69,6 +96,7 @@ class RagChat:
         top_k: int = 5,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        source: str = "api",
     ) -> dict[str, Any]:
         """
         RAG 問答。
@@ -191,6 +219,23 @@ class RagChat:
 
         # 5) 呼叫 Gemini 生成（受 tenacity 重試保護）
         answer = self._generate_answer(messages)
+
+        # 記錄 token 用量到 DB
+        try:
+            input_tokens = 0
+            count_result = self._genai.models.count_tokens(
+                model=self._CHAT_MODEL, contents=messages,
+            )
+            input_tokens = count_result.total_tokens
+            output_tokens = max(1, len(answer) // 2)
+            import time as _time
+            self._log_usage(
+                source=source, question=question, model=self._CHAT_MODEL,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                search_mode=search_mode, fiscal_year=fiscal_year,
+            )
+        except Exception:
+            pass
 
         return {
             "answer": answer,
@@ -380,58 +425,49 @@ class RagChat:
                             "total_tokens": getattr(um, "total_token_count", 0) or 0,
                         }
             finally:
-                # 串流結束後，將完整回答 + token 用量記錄到 LangSmith
+                # 串流結束後，記錄 token 用量到 DB + LangSmith
                 full_answer = "".join(collected_text)
+
+                # 計算 token
+                input_tokens = 0
+                try:
+                    count_result = self._genai.models.count_tokens(
+                        model=self._CHAT_MODEL, contents=messages,
+                    )
+                    input_tokens = count_result.total_tokens
+                except Exception:
+                    pass
+                output_tokens = token_usage.get("completion_tokens") or max(1, len(full_answer) // 2)
+
+                # 寫入 DB
+                self._log_usage(
+                    source=source, question=question, model=self._CHAT_MODEL,
+                    input_tokens=input_tokens, output_tokens=output_tokens,
+                    search_mode=search_mode, fiscal_year=fiscal_year,
+                )
+
+                # LangSmith 追蹤（簡化版，只記錄回答內容）
                 try:
                     import os
                     if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
                         import uuid
                         from datetime import datetime, timezone
                         from langsmith import Client as LsClient
-
-                        # 用 count_tokens API 精確計算輸入 token
-                        input_tokens = 0
-                        try:
-                            count_result = self._genai.models.count_tokens(
-                                model=self._CHAT_MODEL,
-                                contents=messages,
-                            )
-                            input_tokens = count_result.total_tokens
-                        except Exception:
-                            pass
-
-                        # 輸出 token：優先用 usage_metadata，否則用字數估算
-                        output_tokens = 0
-                        if token_usage.get("completion_tokens"):
-                            output_tokens = token_usage["completion_tokens"]
-                        else:
-                            # 中文約 1.5 字/token，英文約 4 字/token，取平均
-                            output_tokens = max(1, len(full_answer) // 2)
-
                         ls = LsClient()
-                        run_id = uuid.uuid4()
                         now = datetime.now(timezone.utc)
-
                         ls.create_run(
                             name="llm_generate",
                             run_type="llm",
-                            id=run_id,
+                            id=uuid.uuid4(),
                             inputs={"question": question},
                             outputs={"answer": full_answer},
-                            extra={
-                                "metadata": {"model": self._CHAT_MODEL},
-                                "usage_metadata": {
-                                    "input_tokens": input_tokens,
-                                    "output_tokens": output_tokens,
-                                    "total_tokens": input_tokens + output_tokens,
-                                },
-                            },
+                            extra={"metadata": {"model": self._CHAT_MODEL}},
                             start_time=now,
                             end_time=now,
                             project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
                         )
-                except Exception as e:
-                    logger.debug(f"[RAG] LangSmith 追蹤記錄失敗：{e}")
+                except Exception:
+                    pass
 
         return {
             "sources": sources,

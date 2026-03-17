@@ -254,6 +254,7 @@ def ask(req: AskRequest, _=Depends(verify_api_key)):
             top_k=req.top_k,
             language=req.language,
             fiscal_year=req.fiscal_year,
+            source="api",
         )
         return AskResponse(
             answer=result["answer"],
@@ -288,6 +289,7 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
                 top_k=req.top_k,
                 language=req.language,
                 fiscal_year=req.fiscal_year,
+                source="api_stream",
             )
 
             # 先送出 sources 資訊
