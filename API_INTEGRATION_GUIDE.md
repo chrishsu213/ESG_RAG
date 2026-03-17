@@ -90,6 +90,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `threshold` | float | ❌ | 0.5 | 最低相似度門檻 (0-1) |
 | `use_hybrid` | bool | ❌ | true | 是否使用混合搜尋 |
 | `language` | string | ❌ | null | 語言篩選 (`zh-TW` / `en`) |
+| `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
 
 **請求範例**：
 ```json
@@ -98,6 +99,14 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
   "top_k": 5,
   "threshold": 0.5,
   "use_hybrid": true
+}
+```
+
+**篩選特定年度**：
+```json
+{
+  "query": "營收表現",
+  "fiscal_year": "2024"
 }
 ```
 
@@ -140,6 +149,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `search_mode` | string | ❌ | `"hybrid"` | `"hybrid"` 或 `"hybrid_rerank"` |
 | `history` | array | ❌ | [] | 對話歷史 |
 | `language` | string | ❌ | null | 語言篩選 |
+| `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
 
 **請求範例**：
 ```json
@@ -270,3 +280,25 @@ curl -X POST https://rag-api-1019292564477.asia-east1.run.app/api/ask \
 2. AI 問答 (`/api/ask`) 回應時間約 3-10 秒（取決於問題複雜度）
 3. 搜尋 (`/api/search`) 回應時間約 1-3 秒
 4. 建議呼叫端設定 timeout 至少 30 秒
+
+---
+
+## 時間加權排序（自動生效）
+
+所有搜尋結果會根據文件的 `fiscal_year` 自動進行時間加權排序，**較新的文件排名更前**。此功能自動生效，不需要額外參數。
+
+**排序公式**：
+```
+adjusted_score = similarity × 0.9 + year_score × 0.1
+```
+
+| fiscal_year | year_score（以 2026 為當年） |
+|-------------|:--:|
+| 2026 | 1.00 |
+| 2025 | 0.85 |
+| 2024 | 0.70 |
+| 2023 | 0.55 |
+| 未填 | 0.50 |
+| 2022 | 0.40 |
+
+> 💡 **向下相容**：`fiscal_year` 參數是可選的。現有程式不做任何修改即可自動享受時間加權排序的優化。只有需要精確篩選特定年份時，才需要加上 `fiscal_year` 參數。
