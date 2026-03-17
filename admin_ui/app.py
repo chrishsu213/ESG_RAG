@@ -1190,8 +1190,9 @@ elif page == "💬 AI 問答":
                             "rating": "up",
                             "chunk_ids": msg.get("chunk_ids", []),
                         }).execute()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
                     msg["feedback_sent"] = True
                     st.toast("✅ 感謝回饋！")
                     st.rerun()
@@ -1204,8 +1205,9 @@ elif page == "💬 AI 問答":
                             "rating": "down",
                             "chunk_ids": msg.get("chunk_ids", []),
                         }).execute()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
                     msg["feedback_sent"] = True
                     st.toast("📝 感謝回饋，我們會持續改進！")
                     st.rerun()

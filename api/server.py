@@ -262,3 +262,65 @@ def ask(req: AskRequest, _=Depends(verify_api_key)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ask/stream")
+def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
+    """RAG 問答串流版：以 Server-Sent Events (SSE) 逐 token 回傳。
+
+    事件格式：
+      data: {"event": "sources", "sources": [...], "count": N}
+      data: {"event": "token", "text": "..."}
+      data: {"event": "done"}
+    """
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    client = get_supabase()
+    rag = RagChat(client)
+
+    def event_generator():
+        try:
+            result = rag.ask_stream(
+                question=req.question,
+                history=req.history,
+                search_mode=req.search_mode,
+                top_k=req.top_k,
+                language=req.language,
+                fiscal_year=req.fiscal_year,
+            )
+
+            # 先送出 sources 資訊
+            sources_event = _json.dumps({
+                "event": "sources",
+                "sources": result["sources"],
+                "count": len(result["search_results"]),
+            }, ensure_ascii=False)
+            yield f"data: {sources_event}\n\n"
+
+            # 逐 token 串流
+            for text_chunk in result["stream"]:
+                token_event = _json.dumps({
+                    "event": "token",
+                    "text": text_chunk,
+                }, ensure_ascii=False)
+                yield f"data: {token_event}\n\n"
+
+            # 結束信號
+            yield f"data: {_json.dumps({'event': 'done'})}\n\n"
+
+        except Exception as e:
+            error_event = _json.dumps({
+                "event": "error",
+                "detail": str(e),
+            }, ensure_ascii=False)
+            yield f"data: {error_event}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -35,6 +35,7 @@ class VisionPdfParser:
     _VISION_MODEL = "gemini-3-flash-preview"
     _MAX_RETRIES = 3
     _RETRY_DELAY = 2.0
+    _BATCH_PAGE_LIMIT = 15  # 整份 PDF 上傳時，每批最多頁數
 
     _VISION_PROMPT = """你是一位專業的文件數位化專家。請將此 PDF 頁面的所有內容轉換為結構化的 Markdown 格式。
 
@@ -158,7 +159,7 @@ class VisionPdfParser:
 
         doc.close()
         return "\n\n---\n\n".join(pages_md)
-    _BATCH_PAGE_LIMIT = 15  # 每批最多頁數
+
 
     def _parse_whole_pdf(self, file_path: str) -> str:
         """整份 PDF 上傳給 Gemini。超過 30 頁自動分批處理。"""

@@ -237,9 +237,15 @@ class SemanticRetriever:
                     response_mime_type="application/json",
                 ),
             )
-            expanded = json.loads(response.text.strip())
+            raw_text = response.text.strip()
+            # 防禦性解析：清理可能的 Markdown code block 標記
+            json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+            clean_text = json_match.group(0) if json_match else raw_text
+            expanded = json.loads(clean_text)
             if isinstance(expanded, list):
-                return [str(q) for q in expanded[:2] if q and str(q).strip()]
+                return [str(q).strip() for q in expanded[:2] if q and str(q).strip()]
+        except json.JSONDecodeError as e:
+            print(f"[RETRIEVER] 查詢展開 JSON 解析失敗：{e}")
         except Exception as e:
             print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
         return []
@@ -262,7 +268,7 @@ class SemanticRetriever:
 
         for r in results:
             fy = r.get("fiscal_year")
-            year_score = 0.5  # 未填年度的預設分數
+            year_score = 0.7  # 未填年度給予中性偏高權重，避免懲罰未標記的新文件
             if fy:
                 # 嘗試從 fiscal_year 提取數字年份（支援民國年 3 位數 + 西元年 4 位數）
                 match = re.search(r"(\d{3,4})", str(fy))
