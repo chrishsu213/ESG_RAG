@@ -26,6 +26,14 @@ def _get_secret(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+# ── LangSmith 設定：從 st.secrets 同步到 os.environ ──
+# langsmith 套件直接讀取 os.environ，Streamlit secrets 需手動同步
+for _ls_key in ("LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY", "LANGCHAIN_PROJECT"):
+    _val = _get_secret(_ls_key)
+    if _val and _ls_key not in os.environ:
+        os.environ[_ls_key] = _val
+
+
 # ── 延遲載入密鑰 ──────────────────────────────────────
 # 各模組 import 時不會立即解析密鑰值，而是在首次存取時才呼叫 _get_secret()。
 # 這確保 Streamlit Cloud 的 st.secrets 在讀取時已準備好。
