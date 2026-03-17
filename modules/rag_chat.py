@@ -270,6 +270,7 @@ class RagChat:
         top_k: int = 5,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        source: str = "admin_ui",
     ) -> dict[str, Any]:
         """
         串流版 RAG 問答。回傳 dict 包含：
