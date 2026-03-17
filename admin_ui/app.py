@@ -1176,41 +1176,46 @@ elif page == "💬 AI 問答":
                 "msg_idx": msg_idx,
             })
     
-    # ── 回饋按鈕（放在聊天訊息外，避免 rerun 問題）────
+    # ── 回饋按鈕（只對最新一則未回饋的 AI 回答顯示）────
+    last_assistant_idx = None
     for i, msg in enumerate(st.session_state["chat_history"]):
         if msg["role"] == "assistant" and not msg.get("feedback_sent"):
-            fb_key = f"fb_{i}"
-            col_up, col_down, col_spacer = st.columns([1, 1, 8])
-            with col_up:
-                if st.button("👍", key=f"{fb_key}_up", help="回答有幫助"):
-                    try:
-                        client.table("qa_feedback").insert({
-                            "question": msg.get("question", ""),
-                            "answer": msg["content"],
-                            "rating": "up",
-                            "chunk_ids": msg.get("chunk_ids", []),
-                        }).execute()
-                    except Exception as e:
-                        import logging
-                        logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
-                    msg["feedback_sent"] = True
-                    st.toast("✅ 感謝回饋！")
-                    st.rerun()
-            with col_down:
-                if st.button("👎", key=f"{fb_key}_down", help="回答需改善"):
-                    try:
-                        client.table("qa_feedback").insert({
-                            "question": msg.get("question", ""),
-                            "answer": msg["content"],
-                            "rating": "down",
-                            "chunk_ids": msg.get("chunk_ids", []),
-                        }).execute()
-                    except Exception as e:
-                        import logging
-                        logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
-                    msg["feedback_sent"] = True
-                    st.toast("📝 感謝回饋，我們會持續改進！")
-                    st.rerun()
+            last_assistant_idx = i
+
+    if last_assistant_idx is not None:
+        msg = st.session_state["chat_history"][last_assistant_idx]
+        fb_key = f"fb_{last_assistant_idx}"
+        col_up, col_down, col_spacer = st.columns([1, 1, 8])
+        with col_up:
+            if st.button("👍", key=f"{fb_key}_up", help="回答有幫助"):
+                try:
+                    client.table("qa_feedback").insert({
+                        "question": msg.get("question", ""),
+                        "answer": msg["content"],
+                        "rating": "up",
+                        "chunk_ids": msg.get("chunk_ids", []),
+                    }).execute()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
+                msg["feedback_sent"] = True
+                st.toast("✅ 感謝回饋！")
+                st.rerun()
+        with col_down:
+            if st.button("👎", key=f"{fb_key}_down", help="回答需改善"):
+                try:
+                    client.table("qa_feedback").insert({
+                        "question": msg.get("question", ""),
+                        "answer": msg["content"],
+                        "rating": "down",
+                        "chunk_ids": msg.get("chunk_ids", []),
+                    }).execute()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"回饋寫入失敗：{e}")
+                msg["feedback_sent"] = True
+                st.toast("📝 感謝回饋，我們會持續改進！")
+                st.rerun()
 
 # ══════════════════════════════════════════════════════
 # 頁面：專有名詞字典管理
