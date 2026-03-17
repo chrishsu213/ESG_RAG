@@ -301,9 +301,7 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
             yield f"data: {sources_event}\n\n"
 
             # 逐 token 串流
-            collected = []
             for text_chunk in result["stream"]:
-                collected.append(text_chunk)
                 token_event = _json.dumps({
                     "event": "token",
                     "text": text_chunk,
@@ -312,31 +310,6 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
 
             # 結束信號
             yield f"data: {_json.dumps({'event': 'done'})}\n\n"
-
-            # 記錄 token 用量（串流結束後）
-            try:
-                full_text = "".join(collected)
-                input_tokens = 0
-                try:
-                    from google import genai as _genai_c
-                    _gc = _genai_c.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
-                    cr = _gc.models.count_tokens(
-                        model="gemini-3-flash-preview",
-                        contents=result.get("_messages", []),
-                    )
-                    input_tokens = cr.total_tokens
-                except Exception:
-                    pass
-                rag._log_usage(
-                    source="api_stream", question=req.question,
-                    model="gemini-3-flash-preview",
-                    input_tokens=input_tokens,
-                    output_tokens=max(1, len(full_text) // 2),
-                    search_mode=req.search_mode,
-                    fiscal_year=req.fiscal_year,
-                )
-            except Exception:
-                pass
 
         except Exception as e:
             error_event = _json.dumps({

@@ -369,15 +369,24 @@ class RagChat:
             )
         )
 
-        # 4) 建立串流 generator（純粹負責產出文字，不做任何追蹤）
+        # 4) 建立串流 generator（封裝 Token 追蹤與 Log 寫入）
+        # 注意：所有 finally 需要的變數都在 generator 內以 local 變數保存，
+        #       避免 Python 3.14 generator scope 問題。
+        _src = source          # 複製到 local 避免 closure 問題
+        _q = question
+        _model = self._CHAT_MODEL
+        _sm = search_mode
+        _fy = fiscal_year
+
         def token_stream():
-            import time as _time
-            _CHUNK = 20
-            _DELAY = 0.03
+            collected_text = []
+            input_tokens = 0
+            output_tokens = 0
+
             try:
-                # 嘗試使用串流 API
+                # 使用真串流 API，不需要人工 sleep
                 response = self._genai.models.generate_content(
-                    model=self._CHAT_MODEL,
+                    model=_model,
                     contents=messages,
                     config=types.GenerateContentConfig(
                         temperature=0.1,
@@ -385,27 +394,67 @@ class RagChat:
                     ),
                     stream=True,
                 )
+
                 for chunk in response:
                     if hasattr(chunk, "text") and chunk.text:
-                        text = chunk.text
-                        for i in range(0, len(text), _CHUNK):
-                            yield text[i:i + _CHUNK]
-                            _time.sleep(_DELAY)
+                        collected_text.append(chunk.text)
+                        yield chunk.text  # 直接 yield，Streamlit 內建平滑動畫
+
+                    # 攔截最後一個 chunk 夾帶的官方精確 Token 數據
+                    if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                        um = chunk.usage_metadata
+                        input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(um, "candidates_token_count", 0) or 0
+
             except (AttributeError, TypeError):
-                # SDK 不支援串流 → 退回同步生成
+                # Fallback: 同步生成
                 response = self._genai.models.generate_content(
-                    model=self._CHAT_MODEL,
+                    model=_model,
                     contents=messages,
                     config=types.GenerateContentConfig(temperature=0.1),
                 )
                 text = response.text.strip()
-                for i in range(0, len(text), _CHUNK):
-                    yield text[i:i + _CHUNK]
-                    _time.sleep(_DELAY)
+                collected_text.append(text)
+
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    um = response.usage_metadata
+                    input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                    output_tokens = getattr(um, "candidates_token_count", 0) or 0
+
+                yield text
+
+            finally:
+                # generator 消耗完畢後自動寫入 Log
+                try:
+                    full_text = "".join(collected_text)
+
+                    # 如果 API 沒回傳 token，啟用估算機制
+                    if input_tokens == 0:
+                        try:
+                            cr = self._genai.models.count_tokens(
+                                model=_model, contents=messages,
+                            )
+                            input_tokens = cr.total_tokens
+                        except Exception:
+                            input_tokens = len(str(messages)) // 3
+
+                    if output_tokens == 0:
+                        output_tokens = max(1, len(full_text) // 2)
+
+                    self._log_usage(
+                        source=_src,
+                        question=_q,
+                        model=_model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        search_mode=_sm,
+                        fiscal_year=_fy,
+                    )
+                except Exception:
+                    pass  # 追蹤失敗絕不影響使用者體驗
 
         return {
             "sources": sources,
             "search_results": results,
             "stream": token_stream(),
-            "_messages": messages,
         }
