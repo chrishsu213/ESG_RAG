@@ -327,6 +327,7 @@ class RagChat:
         # 4) 建立串流 generator（帶容錯退回 + LangSmith 追蹤）
         def token_stream():
             collected_text = []
+            token_usage = {}
             try:
                 try:
                     # 嘗試使用串流 API
@@ -339,10 +340,20 @@ class RagChat:
                         ),
                         stream=True,
                     )
+                    last_chunk = None
                     for chunk in response:
+                        last_chunk = chunk
                         if hasattr(chunk, "text") and chunk.text:
                             collected_text.append(chunk.text)
                             yield chunk.text
+                    # 從最後一個 chunk 提取 token 用量
+                    if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
+                        um = last_chunk.usage_metadata
+                        token_usage = {
+                            "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                            "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                            "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                        }
                 except (AttributeError, TypeError) as e:
                     # SDK 版本不支援串流 → 退回一次性生成
                     logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
@@ -356,8 +367,16 @@ class RagChat:
                     text = response.text.strip()
                     collected_text.append(text)
                     yield text
+                    # 從同步回應提取 token 用量
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        um = response.usage_metadata
+                        token_usage = {
+                            "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                            "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                            "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                        }
             finally:
-                # 串流結束後，將完整回答記錄到 LangSmith
+                # 串流結束後，將完整回答 + token 用量記錄到 LangSmith
                 full_answer = "".join(collected_text)
                 try:
                     from langsmith import Client as LsClient
@@ -371,7 +390,9 @@ class RagChat:
                             outputs={
                                 "answer": full_answer,
                                 "answer_length": len(full_answer),
+                                "token_usage": token_usage,
                             },
+                            extra={"tokens": token_usage} if token_usage else {},
                             project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
                         )
                 except Exception:
