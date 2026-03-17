@@ -1164,12 +1164,51 @@ elif page == "💬 AI 問答":
                             f"{page_info}{section}{sim}{search_badge}"
                         )
             
-            # 儲存助手回答到歷史
+            # 儲存助手回答到歷史（含 chunk IDs 用於回饋）
+            chunk_ids = [r.get("id") for r in result.get("search_results", []) if r.get("id")]
+            msg_idx = len(st.session_state["chat_history"])
             st.session_state["chat_history"].append({
                 "role": "assistant",
                 "content": answer_text,
                 "sources": sources,
+                "question": prompt,
+                "chunk_ids": chunk_ids,
+                "msg_idx": msg_idx,
             })
+    
+    # ── 回饋按鈕（放在聊天訊息外，避免 rerun 問題）────
+    for i, msg in enumerate(st.session_state["chat_history"]):
+        if msg["role"] == "assistant" and not msg.get("feedback_sent"):
+            fb_key = f"fb_{i}"
+            col_up, col_down, col_spacer = st.columns([1, 1, 8])
+            with col_up:
+                if st.button("👍", key=f"{fb_key}_up", help="回答有幫助"):
+                    try:
+                        client.table("qa_feedback").insert({
+                            "question": msg.get("question", ""),
+                            "answer": msg["content"],
+                            "rating": "up",
+                            "chunk_ids": msg.get("chunk_ids", []),
+                        }).execute()
+                    except Exception:
+                        pass
+                    msg["feedback_sent"] = True
+                    st.toast("✅ 感謝回饋！")
+                    st.rerun()
+            with col_down:
+                if st.button("👎", key=f"{fb_key}_down", help="回答需改善"):
+                    try:
+                        client.table("qa_feedback").insert({
+                            "question": msg.get("question", ""),
+                            "answer": msg["content"],
+                            "rating": "down",
+                            "chunk_ids": msg.get("chunk_ids", []),
+                        }).execute()
+                    except Exception:
+                        pass
+                    msg["feedback_sent"] = True
+                    st.toast("📝 感謝回饋，我們會持續改進！")
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════
 # 頁面：專有名詞字典管理

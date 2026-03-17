@@ -15,6 +15,15 @@ from supabase import Client
 
 from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        """langsmith 未安裝時的 no-op decorator。"""
+        def decorator(fn):
+            return fn
+        return decorator if not args or not callable(args[0]) else args[0]
+
 
 class SemanticRetriever:
     """
@@ -25,6 +34,7 @@ class SemanticRetriever:
     """
 
     _RERANK_MODEL = "gemini-3-flash-preview"
+    _EXPAND_MODEL = "gemini-2.0-flash-lite"  # 極快、極便宜，用於查詢展開
 
     def __init__(
         self,
@@ -38,6 +48,7 @@ class SemanticRetriever:
         self._genai = genai.Client(api_key=key)
         self._model = EMBEDDING_MODEL
 
+    @traceable(name="embed_query")
     def _embed_query(self, query: str) -> list[float]:
         """將查詢文字轉為向量。"""
         result = self._genai.models.embed_content(
@@ -51,6 +62,7 @@ class SemanticRetriever:
         return result.embeddings[0].values
 
     # ── 純向量搜尋 ─────────────────────────────────────
+    @traceable(name="vector_search")
     def search(
         self,
         query: str,
@@ -77,6 +89,7 @@ class SemanticRetriever:
         return self._apply_time_weight(result.data or [])
 
     # ── 混合搜尋 ───────────────────────────────────────
+    @traceable(name="hybrid_search")
     def hybrid_search(
         self,
         query: str,
@@ -84,33 +97,52 @@ class SemanticRetriever:
         threshold: float = 0.3,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        expand_query: bool = True,
     ) -> list[dict[str, Any]]:
         """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。
         language: 若指定（如 'en'），只搜該語言的文件。
         fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
+        expand_query: 是否展開查詢以提升召回率。
         如果 hybrid RPC 尚未建立，自動退回純向量搜尋。
         """
-        query_embedding = self._embed_query(query)
-        params = {
-            "query_embedding": query_embedding,
-            "query_text": query,
-            "match_count": top_k,
-            "match_threshold": threshold,
-        }
-        if language:
-            params["filter_language"] = language
-        if fiscal_year:
-            params["filter_fiscal_year"] = fiscal_year
-        try:
-            result = self._client.rpc("match_chunks_hybrid", params).execute()
-            return self._apply_time_weight(result.data or [])
-        except Exception as e:
-            if "match_chunks_hybrid" in str(e):
-                print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
-                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
-            raise
+        # 建立查詢清單（原始 + 展開）
+        queries = [query]
+        if expand_query:
+            expanded = self._expand_query(query)
+            queries.extend(expanded)
+
+        all_results = []
+        seen_ids = set()
+
+        for q in queries:
+            query_embedding = self._embed_query(q)
+            params = {
+                "query_embedding": query_embedding,
+                "query_text": q,
+                "match_count": top_k,
+                "match_threshold": threshold,
+            }
+            if language:
+                params["filter_language"] = language
+            if fiscal_year:
+                params["filter_fiscal_year"] = fiscal_year
+            try:
+                result = self._client.rpc("match_chunks_hybrid", params).execute()
+                for r in (result.data or []):
+                    rid = r.get("id")
+                    if rid and rid not in seen_ids:
+                        seen_ids.add(rid)
+                        all_results.append(r)
+            except Exception as e:
+                if "match_chunks_hybrid" in str(e):
+                    print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
+                    return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
+                raise
+
+        return self._apply_time_weight(all_results)
 
     # ── Re-ranking ─────────────────────────────────────
+    @traceable(name="rerank")
     def rerank(
         self,
         query: str,
@@ -167,6 +199,43 @@ class SemanticRetriever:
         except Exception as e:
             print(f"[RERANK] Re-ranking 失敗，返回原始排序：{e}")
             return results[:top_k]
+
+    # ── 查詢展開 ───────────────────────────────────────
+    @traceable(name="expand_query")
+    def _expand_query(self, query: str) -> list[str]:
+        """用 Gemini Flash 將使用者查詢展開為 2 個替代查詢。
+        
+        若展開失敗（如 API 異常），回傳空列表，不影響原始搜尋。
+        """
+        if len(query) > 100:  # 查詢已經夠長，不需展開
+            return []
+
+        prompt = f"""你是 ESG 與財務資訊檢索專家。使用者輸入了一個搜尋查詢，請將它改寫為 2 個更精確的替代查詢，用於搜尋企業永續報告、財務報告等知識庫。
+
+規則：
+1. 保持與原始查詢相同的意圖，不要偏離主題
+2. 補充可能的專業術語、全名、同義詞
+3. 只輸出 JSON 陣列，例如 ["查詢1", "查詢2"]
+
+原始查詢：{query}
+
+輸出 JSON 陣列："""
+
+        try:
+            response = self._genai.models.generate_content(
+                model=self._EXPAND_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                ),
+            )
+            expanded = json.loads(response.text.strip())
+            if isinstance(expanded, list):
+                return [str(q) for q in expanded[:2] if q and str(q).strip()]
+        except Exception as e:
+            print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
+        return []
 
     # ── 時間加權排序 ───────────────────────────────────
     @staticmethod

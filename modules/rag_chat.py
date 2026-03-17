@@ -15,6 +15,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_l
 from config import GEMINI_API_KEY
 from modules.retriever import SemanticRetriever
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(fn):
+            return fn
+        return decorator if not args or not callable(args[0]) else args[0]
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +60,7 @@ class RagChat:
         self._retriever = SemanticRetriever(supabase_client, api_key=key)
         self._supabase = supabase_client
 
+    @traceable(name="rag_ask")
     def ask(
         self,
         question: str,
@@ -207,6 +216,7 @@ class RagChat:
         return response.text.strip()
 
     # ── 串流問答 ─────────────────────────────────────
+    @traceable(name="rag_ask_stream")
     def ask_stream(
         self,
         question: str,
@@ -314,18 +324,33 @@ class RagChat:
             )
         )
 
-        # 4) 建立串流 generator
+        # 4) 建立串流 generator（帶容錯退回）
         def token_stream():
-            response = self._genai.models.generate_content_stream(
-                model=self._CHAT_MODEL,
-                contents=messages,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                ),
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
+            try:
+                # 嘗試使用串流 API
+                response = self._genai.models.generate_content(
+                    model=self._CHAT_MODEL,
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_modalities=["TEXT"],
+                    ),
+                    stream=True,
+                )
+                for chunk in response:
+                    if hasattr(chunk, "text") and chunk.text:
+                        yield chunk.text
+            except (AttributeError, TypeError) as e:
+                # SDK 版本不支援串流 → 退回一次性生成
+                logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
+                response = self._genai.models.generate_content(
+                    model=self._CHAT_MODEL,
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                    ),
+                )
+                yield response.text.strip()
 
         return {
             "sources": sources,
