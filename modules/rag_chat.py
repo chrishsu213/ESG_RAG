@@ -371,8 +371,11 @@ class RagChat:
 
         # 4) 建立串流 generator（帶容錯退回 + LangSmith 追蹤）
         def token_stream():
+            import time as _time
             collected_text = []
             token_usage = {}
+            _STREAM_CHUNK_SIZE = 20
+            _STREAM_DELAY = 0.03  # 30ms 延遲，產生可見的打字機效果
             try:
                 try:
                     # 嘗試使用串流 API
@@ -391,10 +394,10 @@ class RagChat:
                         if hasattr(chunk, "text") and chunk.text:
                             text = chunk.text
                             collected_text.append(text)
-                            # 將大塊文字切成小段，讓 st.write_stream 能逐步渲染
-                            _STREAM_CHUNK_SIZE = 20
+                            # 將大塊文字切成小段
                             for i in range(0, len(text), _STREAM_CHUNK_SIZE):
                                 yield text[i:i + _STREAM_CHUNK_SIZE]
+                                _time.sleep(_STREAM_DELAY)
                     # 從最後一個 chunk 提取 token 用量
                     if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
                         um = last_chunk.usage_metadata
@@ -404,7 +407,7 @@ class RagChat:
                             "total_tokens": getattr(um, "total_token_count", 0) or 0,
                         }
                 except (AttributeError, TypeError) as e:
-                    # SDK 版本不支援串流 → 退回一次性生成
+                    # SDK 版本不支援串流 → 退回一次性生成（仍模擬打字機效果）
                     logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
                     response = self._genai.models.generate_content(
                         model=self._CHAT_MODEL,
@@ -415,7 +418,10 @@ class RagChat:
                     )
                     text = response.text.strip()
                     collected_text.append(text)
-                    yield text
+                    # 同樣切成小段模擬打字機
+                    for i in range(0, len(text), _STREAM_CHUNK_SIZE):
+                        yield text[i:i + _STREAM_CHUNK_SIZE]
+                        _time.sleep(_STREAM_DELAY)
                     # 從同步回應提取 token 用量
                     if hasattr(response, "usage_metadata") and response.usage_metadata:
                         um = response.usage_metadata
