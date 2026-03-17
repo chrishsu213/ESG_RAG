@@ -389,10 +389,12 @@ elif page == "📤 上傳與匯入":
                     if chunks:
                         progress.progress(80, text="寫入資料庫...")
                         exporter = SupabaseExporter(client)
-                        final_name = upload_display_name.strip() if upload_display_name.strip() else doc_info["file_name"]
+                        # 使用原始中文檔名（而非 uuid 暫存檔名）
+                        original_filename = st.session_state.get("draft_filename", doc_info["file_name"])
+                        final_name = upload_display_name.strip() if upload_display_name.strip() else os.path.splitext(original_filename)[0]
                         rg = upload_report_group.strip() if upload_report_group.strip() else None
                         doc_id = exporter.insert_document(
-                            doc_info["file_name"],
+                            original_filename,
                             doc_info["file_hash"],
                             doc_info["source_type"],
                             category=upload_category,
