@@ -370,114 +370,43 @@ class RagChat:
             )
         )
 
-        # 4) 建立串流 generator（帶容錯退回 + LangSmith 追蹤）
+        # 4) 建立串流 generator（純粹負責產出文字，不做任何追蹤）
         def token_stream():
             import time as _time
-            collected_text = []
-            token_usage = {}
-            _STREAM_CHUNK_SIZE = 20
-            _STREAM_DELAY = 0.03  # 30ms 延遲，產生可見的打字機效果
+            _CHUNK = 20
+            _DELAY = 0.03
             try:
-                try:
-                    # 嘗試使用串流 API
-                    response = self._genai.models.generate_content(
-                        model=self._CHAT_MODEL,
-                        contents=messages,
-                        config=types.GenerateContentConfig(
-                            temperature=0.1,
-                            response_modalities=["TEXT"],
-                        ),
-                        stream=True,
-                    )
-                    last_chunk = None
-                    for chunk in response:
-                        last_chunk = chunk
-                        if hasattr(chunk, "text") and chunk.text:
-                            text = chunk.text
-                            collected_text.append(text)
-                            # 將大塊文字切成小段
-                            for i in range(0, len(text), _STREAM_CHUNK_SIZE):
-                                yield text[i:i + _STREAM_CHUNK_SIZE]
-                                _time.sleep(_STREAM_DELAY)
-                    # 從最後一個 chunk 提取 token 用量
-                    if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
-                        um = last_chunk.usage_metadata
-                        token_usage = {
-                            "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                            "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
-                            "total_tokens": getattr(um, "total_token_count", 0) or 0,
-                        }
-                except (AttributeError, TypeError) as e:
-                    # SDK 版本不支援串流 → 退回一次性生成（仍模擬打字機效果）
-                    logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
-                    response = self._genai.models.generate_content(
-                        model=self._CHAT_MODEL,
-                        contents=messages,
-                        config=types.GenerateContentConfig(
-                            temperature=0.1,
-                        ),
-                    )
-                    text = response.text.strip()
-                    collected_text.append(text)
-                    # 同樣切成小段模擬打字機
-                    for i in range(0, len(text), _STREAM_CHUNK_SIZE):
-                        yield text[i:i + _STREAM_CHUNK_SIZE]
-                        _time.sleep(_STREAM_DELAY)
-                    # 從同步回應提取 token 用量
-                    if hasattr(response, "usage_metadata") and response.usage_metadata:
-                        um = response.usage_metadata
-                        token_usage = {
-                            "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                            "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
-                            "total_tokens": getattr(um, "total_token_count", 0) or 0,
-                        }
-            finally:
-                # 串流結束後，記錄 token 用量（任何追蹤失敗都不影響使用者）
-                try:
-                    full_answer = "".join(collected_text)
-
-                    # 計算 token
-                    input_tokens = 0
-                    try:
-                        count_result = self._genai.models.count_tokens(
-                            model=self._CHAT_MODEL, contents=messages,
-                        )
-                        input_tokens = count_result.total_tokens
-                    except Exception:
-                        pass
-                    output_tokens = token_usage.get("completion_tokens") or max(1, len(full_answer) // 2)
-
-                    # 寫入 DB
-                    self._log_usage(
-                        source=source, question=question, model=self._CHAT_MODEL,
-                        input_tokens=input_tokens, output_tokens=output_tokens,
-                        search_mode=search_mode, fiscal_year=fiscal_year,
-                    )
-
-                    # LangSmith 追蹤
-                    import os
-                    if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
-                        import uuid
-                        from datetime import datetime, timezone
-                        from langsmith import Client as LsClient
-                        ls = LsClient()
-                        now = datetime.now(timezone.utc)
-                        ls.create_run(
-                            name="llm_generate",
-                            run_type="llm",
-                            id=uuid.uuid4(),
-                            inputs={"question": question},
-                            outputs={"answer": full_answer},
-                            extra={"metadata": {"model": self._CHAT_MODEL}},
-                            start_time=now,
-                            end_time=now,
-                            project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
-                        )
-                except Exception:
-                    pass  # 追蹤失敗絕不影響使用者體驗
+                # 嘗試使用串流 API
+                response = self._genai.models.generate_content(
+                    model=self._CHAT_MODEL,
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_modalities=["TEXT"],
+                    ),
+                    stream=True,
+                )
+                for chunk in response:
+                    if hasattr(chunk, "text") and chunk.text:
+                        text = chunk.text
+                        for i in range(0, len(text), _CHUNK):
+                            yield text[i:i + _CHUNK]
+                            _time.sleep(_DELAY)
+            except (AttributeError, TypeError):
+                # SDK 不支援串流 → 退回同步生成
+                response = self._genai.models.generate_content(
+                    model=self._CHAT_MODEL,
+                    contents=messages,
+                    config=types.GenerateContentConfig(temperature=0.1),
+                )
+                text = response.text.strip()
+                for i in range(0, len(text), _CHUNK):
+                    yield text[i:i + _CHUNK]
+                    _time.sleep(_DELAY)
 
         return {
             "sources": sources,
             "search_results": results,
             "stream": token_stream(),
+            "_messages": messages,
         }

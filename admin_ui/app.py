@@ -1175,6 +1175,28 @@ elif page == "💬 AI 問答":
                 "chunk_ids": chunk_ids,
                 "msg_idx": msg_idx,
             })
+
+            # 記錄 token 用量到 DB（在 generator 外部執行，避免 Python 3.14 scope 問題）
+            try:
+                input_tokens = 0
+                try:
+                    from google import genai as _genai_count
+                    _gc = _genai_count.Client(api_key=GEMINI_API_KEY)
+                    count_result = _gc.models.count_tokens(
+                        model="gemini-3-flash-preview",
+                        contents=result.get("_messages", []),
+                    )
+                    input_tokens = count_result.total_tokens
+                except Exception:
+                    pass
+                output_tokens = max(1, len(answer_text or "") // 2)
+                rag._log_usage(
+                    source="admin_ui", question=prompt, model="gemini-3-flash-preview",
+                    input_tokens=input_tokens, output_tokens=output_tokens,
+                    search_mode=search_mode, fiscal_year=chat_fiscal_year.strip() or None,
+                )
+            except Exception:
+                pass
     
     # ── 回饋按鈕（只對最新一則未回饋的 AI 回答顯示）────
     last_assistant_idx = None
