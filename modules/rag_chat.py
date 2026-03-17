@@ -344,8 +344,12 @@ class RagChat:
                     for chunk in response:
                         last_chunk = chunk
                         if hasattr(chunk, "text") and chunk.text:
-                            collected_text.append(chunk.text)
-                            yield chunk.text
+                            text = chunk.text
+                            collected_text.append(text)
+                            # 將大塊文字切成小段，讓 st.write_stream 能逐步渲染
+                            _STREAM_CHUNK_SIZE = 20
+                            for i in range(0, len(text), _STREAM_CHUNK_SIZE):
+                                yield text[i:i + _STREAM_CHUNK_SIZE]
                     # 從最後一個 chunk 提取 token 用量
                     if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
                         um = last_chunk.usage_metadata
