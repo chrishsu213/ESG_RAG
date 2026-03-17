@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Optional
 
@@ -114,10 +115,11 @@ class SemanticRetriever:
         all_results = []
         seen_ids = set()
 
-        for q in queries:
-            query_embedding = self._embed_query(q)
+        def _fetch_single(q: str) -> list[dict]:
+            """單一查詢的檢索遏輯（用於平行執行）。"""
+            q_embedding = self._embed_query(q)
             params = {
-                "query_embedding": query_embedding,
+                "query_embedding": q_embedding,
                 "query_text": q,
                 "match_count": top_k,
                 "match_threshold": threshold,
@@ -126,18 +128,23 @@ class SemanticRetriever:
                 params["filter_language"] = language
             if fiscal_year:
                 params["filter_fiscal_year"] = fiscal_year
-            try:
-                result = self._client.rpc("match_chunks_hybrid", params).execute()
-                for r in (result.data or []):
-                    rid = r.get("id")
-                    if rid and rid not in seen_ids:
-                        seen_ids.add(rid)
-                        all_results.append(r)
-            except Exception as e:
-                if "match_chunks_hybrid" in str(e):
-                    print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
-                    return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
-                raise
+            return self._client.rpc("match_chunks_hybrid", params).execute().data or []
+
+        try:
+            # 平行發射多個檢索請求
+            with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+                futures = [executor.submit(_fetch_single, q) for q in queries]
+                for future in as_completed(futures):
+                    for r in future.result():
+                        rid = r.get("id")
+                        if rid and rid not in seen_ids:
+                            seen_ids.add(rid)
+                            all_results.append(r)
+        except Exception as e:
+            if "match_chunks_hybrid" in str(e):
+                print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
+                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
+            raise
 
         return self._apply_time_weight(all_results)
 
@@ -257,10 +264,12 @@ class SemanticRetriever:
             fy = r.get("fiscal_year")
             year_score = 0.5  # 未填年度的預設分數
             if fy:
-                # 嘗試從 fiscal_year 提取數字年份
-                match = re.search(r"(\d{4})", str(fy))
+                # 嘗試從 fiscal_year 提取數字年份（支援民國年 3 位數 + 西元年 4 位數）
+                match = re.search(r"(\d{3,4})", str(fy))
                 if match:
                     doc_year = int(match.group(1))
+                    if doc_year < 1911:  # 民國年轉換（如 113 → 2024）
+                        doc_year += 1911
                     years_diff = max(0, current_year - doc_year)
                     year_score = max(0, 1.0 - years_diff * 0.15)
 

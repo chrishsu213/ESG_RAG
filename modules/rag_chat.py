@@ -324,33 +324,58 @@ class RagChat:
             )
         )
 
-        # 4) 建立串流 generator（帶容錯退回）
+        # 4) 建立串流 generator（帶容錯退回 + LangSmith 追蹤）
         def token_stream():
+            collected_text = []
             try:
-                # 嘗試使用串流 API
-                response = self._genai.models.generate_content(
-                    model=self._CHAT_MODEL,
-                    contents=messages,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        response_modalities=["TEXT"],
-                    ),
-                    stream=True,
-                )
-                for chunk in response:
-                    if hasattr(chunk, "text") and chunk.text:
-                        yield chunk.text
-            except (AttributeError, TypeError) as e:
-                # SDK 版本不支援串流 → 退回一次性生成
-                logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
-                response = self._genai.models.generate_content(
-                    model=self._CHAT_MODEL,
-                    contents=messages,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                    ),
-                )
-                yield response.text.strip()
+                try:
+                    # 嘗試使用串流 API
+                    response = self._genai.models.generate_content(
+                        model=self._CHAT_MODEL,
+                        contents=messages,
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            response_modalities=["TEXT"],
+                        ),
+                        stream=True,
+                    )
+                    for chunk in response:
+                        if hasattr(chunk, "text") and chunk.text:
+                            collected_text.append(chunk.text)
+                            yield chunk.text
+                except (AttributeError, TypeError) as e:
+                    # SDK 版本不支援串流 → 退回一次性生成
+                    logger.warning(f"[RAG] 串流不可用，退回同步生成：{e}")
+                    response = self._genai.models.generate_content(
+                        model=self._CHAT_MODEL,
+                        contents=messages,
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                        ),
+                    )
+                    text = response.text.strip()
+                    collected_text.append(text)
+                    yield text
+            finally:
+                # 串流結束後，將完整回答記錄到 LangSmith
+                full_answer = "".join(collected_text)
+                try:
+                    from langsmith import Client as LsClient
+                    import os
+                    if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
+                        ls = LsClient()
+                        ls.create_run(
+                            name="llm_stream_output",
+                            run_type="llm",
+                            inputs={"question": question, "model": self._CHAT_MODEL},
+                            outputs={
+                                "answer": full_answer,
+                                "answer_length": len(full_answer),
+                            },
+                            project_name=os.environ.get("LANGCHAIN_PROJECT", "TCC-RAG"),
+                        )
+                except Exception:
+                    pass  # 追蹤失敗不影響使用者
 
         return {
             "sources": sources,
