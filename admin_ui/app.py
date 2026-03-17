@@ -595,7 +595,7 @@ elif page == "📤 上傳與匯入":
                     except Exception:
                         pass  # 字典表可能尚未建立
                     
-                    parser = AudioParser(on_progress=on_progress)
+                    parser = AudioParser(api_key=GEMINI_API_KEY, on_progress=on_progress)
                     result = parser.parse(tmp_path, terms_dict=terms_dict)
                     
                     progress_placeholder.success("轉錄完成！")
