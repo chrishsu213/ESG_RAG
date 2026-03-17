@@ -47,6 +47,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --cpu 1 \
     --min-instances 0 \
     --max-instances 3 \
+    --set-env-vars "ENV=production" \
     --set-secrets "SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest" \
     --quiet
 

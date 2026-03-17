@@ -12,6 +12,10 @@ import uuid
 import pandas as pd
 import streamlit as st
 
+# 專案根目錄與暫存資料夾（使用絕對路徑，避免 CWD 依賴）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW_DATA_DIR = os.path.join(BASE_DIR, "raw_data")
+
 # 確保能 import 根目錄的 modules 與 config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -283,10 +287,10 @@ elif page == "📤 上傳與匯入":
                 )
         
         if uploaded_file and st.button("🔍 解析並預覽", type="primary", key="parse_preview"):
-            os.makedirs("../raw_data", exist_ok=True)
+            os.makedirs(RAW_DATA_DIR, exist_ok=True)
             # 使用 uuid4 重命名避免 Path Traversal 攻擊
             safe_ext = os.path.splitext(uploaded_file.name)[1].lower()
-            temp_path = os.path.join("../raw_data", f"{uuid.uuid4().hex}{safe_ext}")
+            temp_path = os.path.join(RAW_DATA_DIR, f"{uuid.uuid4().hex}{safe_ext}")
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
@@ -334,6 +338,10 @@ elif page == "📤 上傳與匯入":
                         st.rerun()
             with col_clear:
                 if st.button("❌ 放棄草稿", key="discard_draft"):
+                    # 清理磁碟上的暫存檔
+                    draft_path = st.session_state.get("draft_path")
+                    if draft_path and os.path.exists(draft_path):
+                        os.remove(draft_path)
                     for key in ["draft_md", "draft_path", "draft_filename", "draft_page_offset"]:
                         st.session_state.pop(key, None)
                     st.rerun()
@@ -397,6 +405,10 @@ elif page == "📤 上傳與匯入":
                         group_info = f" [報告: {rg}]" if rg else ""
                         st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({len(chunks)} 段)")
                         
+                        # 清理磁碟上的暫存檔
+                        draft_path = st.session_state.get("draft_path")
+                        if draft_path and os.path.exists(draft_path):
+                            os.remove(draft_path)
                         for key in ["draft_md", "draft_path", "draft_filename", "draft_page_offset"]:
                             st.session_state.pop(key, None)
     
