@@ -135,17 +135,18 @@ class SemanticRetriever:
             response = self._genai.models.generate_content(
                 model=self._RERANK_MODEL,
                 contents=[prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",  # 強制 JSON 輸出
+                ),
             )
             # 解析 JSON 陣列
-            text = response.text.strip()
-            # 移除可能的 markdown 格式
-            text = text.replace("```json", "").replace("```", "").strip()
-            ranking = json.loads(text)
+            ranking = json.loads(response.text.strip())
 
             # 根據排序重組結果
             reranked = []
             for idx in ranking:
-                if 1 <= idx <= len(results):
+                if isinstance(idx, int) and 1 <= idx <= len(results):
                     reranked.append(results[idx - 1])
             # 加入未被排到的結果
             for r in results:

@@ -15,118 +15,38 @@ import sys
 from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
-from modules.uploader import Uploader
-from modules.parser_pdf import PdfParser
-from modules.parser_docx import DocxParser
-from modules.parser_url import UrlParser
-from modules.cleaner import MarkdownCleaner
-from modules.chunker import SemanticChunker
-from modules.exporter import SupabaseExporter
-
-
-# ── 解析器工廠 ────────────────────────────────────────
-PARSERS = {
-    "pdf": PdfParser,
-    "docx": DocxParser,
-    "url": UrlParser,
-}
+from modules.pipeline import DocumentIngestionPipeline
 
 
 def run_pipeline(source: str, do_embed: bool = True) -> None:
-    """執行完整的：上傳 → 去重 → 解析 → 清洗 → 切割 → 嵌入 → 寫入 DB 流程。"""
+    """執行完整的入庫 Pipeline。"""
 
-    # 0) 建立 Supabase client
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         print("[ERROR] 請先在 .env 中設定 SUPABASE_URL 與 SUPABASE_SERVICE_ROLE_KEY")
         sys.exit(1)
 
+    if do_embed and not GEMINI_API_KEY:
+        print("[WARN] 未設定 GEMINI_API_KEY，跳過嵌入步驟（僅儲存純文字）")
+
     client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-    # 1) 上傳 & 去重
-    uploader = Uploader(client)
-    doc_info = uploader.process(source)
-    if doc_info is None:
-        return  # 重複或錯誤，已在 process() 印出訊息
-
-    file_name = doc_info["file_name"]
-    file_hash = doc_info["file_hash"]
-    source_type = doc_info["source_type"]
-    actual_source = doc_info["source"]
-
-    # 2) 解析
-    parser_cls = PARSERS.get(source_type)
-    if parser_cls is None:
-        print(f"[ERROR] 找不到 source_type={source_type} 的解析器")
-        return
-
-    print(f"[PARSE] 開始解析 ({source_type})：{file_name}")
-    parser = parser_cls()
-    raw_md = parser.parse(actual_source)
-    print(f"[PARSE] 原始 Markdown 長度：{len(raw_md)} 字元")
-
-    # 3) 清洗
-    cleaner = MarkdownCleaner()
-    cleaned_md = cleaner.clean(raw_md)
-    print(f"[CLEAN] 清洗後 Markdown 長度：{len(cleaned_md)} 字元")
-
-    # 4) 語義切割
-    chunker = SemanticChunker()
-    chunks = chunker.chunk(cleaned_md)
-    print(f"[CHUNK] 共切割為 {len(chunks)} 個 chunks")
-
-    # （除錯用）印出前 3 個 chunk 摘要
-    for c in chunks[:3]:
-        preview = c["text_content"][:80].replace("\n", " ")
-        print(f"  chunk[{c['chunk_index']}] title={c['metadata'].get('section_title', '')!r}  "
-              f"len={len(c['text_content'])}  preview={preview!r}…")
-
-    # 5) 向量嵌入
-    embeddings = None
-    if do_embed:
-        if not GEMINI_API_KEY:
-            print("[WARN] 未設定 GEMINI_API_KEY，跳過嵌入步驟（僅儲存純文字）")
-        else:
-            from modules.embedder import GeminiEmbedder
-
-            print(f"[EMBED] 開始產生向量嵌入（共 {len(chunks)} 個 chunks）…")
-            embedder = GeminiEmbedder()
-            texts = [c["text_content"] for c in chunks]
-            embeddings = embedder.embed_batch(texts)
-            print(f"[EMBED] 嵌入完成，維度={len(embeddings[0])}")
-    else:
-        print("[EMBED] 已跳過嵌入步驟（--no-embed）")
-
-    # 6) 寫入 Supabase（自動推斷 metadata）
-    # 自動推斷分類
-    _fn = file_name.lower()
-    if source_type == "pdf":
-        if "永續" in _fn or "sustain" in _fn:
-            category = "永續報告書"
-        elif "年報" in _fn or "annual" in _fn:
-            category = "年度報告"
-        else:
-            category = "其他"
-    else:
-        if "/esg/" in _fn or "esg" in _fn:
-            category = "ESG專區"
-        elif "news" in _fn or "新聞" in _fn:
-            category = "新聞"
-        elif "newsletter" in _fn or "電子報" in _fn:
-            category = "電子報"
-        else:
-            category = "官網"
-
-    exporter = SupabaseExporter(client)
-    doc_id = exporter.insert_document(
-        file_name, file_hash, source_type,
-        category=category,
-        report_group=category,
+    pipeline = DocumentIngestionPipeline(
+        supabase_client=client,
+        gemini_api_key=GEMINI_API_KEY if do_embed else None,
+        on_progress=lambda stage, detail: print(f"[{stage.upper()}] {detail}"),
     )
-    exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+
+    # 自動推斷分類
+    category = DocumentIngestionPipeline.guess_category(source, "url" if source.startswith("http") else "pdf")
+
+    result = pipeline.ingest(source, category=category)
 
     print(f"\n{'='*60}")
-    embed_status = "含嵌入向量" if embeddings else "僅純文字"
-    print(f"✅ 完成！document_id={doc_id}，共寫入 {len(chunks)} 個 chunks（{embed_status}）。")
+    if result.success:
+        embed_status = "含嵌入向量" if result.has_embeddings else "僅純文字"
+        print(f"✅ 完成！document_id={result.document_id}，共寫入 {result.chunks_count} 個 chunks（{embed_status}）。")
+    else:
+        print(f"❌ 失敗：{result.message}")
     print(f"{'='*60}")
 
 

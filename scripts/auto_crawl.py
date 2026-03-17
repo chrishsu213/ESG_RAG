@@ -32,14 +32,7 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
 from supabase import create_client
 from modules.crawler import SiteCrawler
-from modules.parser_url import UrlParser
-from modules.cleaner import MarkdownCleaner
-from modules.chunker import SemanticChunker
-from modules.exporter import SupabaseExporter
-from modules.uploader import Uploader
-
-if GEMINI_API_KEY:
-    from modules.embedder import GeminiEmbedder
+from modules.pipeline import DocumentIngestionPipeline
 
 # ── 設定 ─────────────────────────────────────────────
 # 要定時爬的網站清單
@@ -89,47 +82,15 @@ log = logging.getLogger(__name__)
 
 def process_url(client, url: str, category: str, language: str = "zh-TW") -> tuple[bool, str]:
     """處理單一 URL 的完整 Pipeline。"""
-    uploader = Uploader(client)
-    doc_info = uploader.process(url)
-    if doc_info is None:
-        return False, "already_exists"
-
-    parser = UrlParser()
-    meta = parser.parse_with_meta(doc_info["source"])
-    raw_md = meta["content"]
-    page_title = meta["title"]
-
-    cleaned_md = MarkdownCleaner().clean(raw_md)
-    chunks = SemanticChunker().chunk(cleaned_md)
-
-    if not chunks:
-        return False, "no_content"
-
-    embeddings = None
-    if GEMINI_API_KEY:
-        embedder = GeminiEmbedder()
-        texts = [c["text_content"] for c in chunks]
-        embeddings = embedder.embed_batch(texts)
-
-    exporter = SupabaseExporter(client)
-    final_name = page_title if page_title else doc_info["file_name"]
-
-    doc_id = exporter.insert_document(
-        doc_info["file_name"],
-        doc_info["file_hash"],
-        doc_info["source_type"],
-        category=category,
-        display_name=final_name,
+    pipeline = DocumentIngestionPipeline(
+        supabase_client=client,
+        gemini_api_key=GEMINI_API_KEY,
     )
-
-    # 更新語言標記
-    try:
-        client.table("documents").update({"language": language}).eq("id", doc_id).execute()
-    except Exception:
-        pass
-
-    exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
-    return True, f"{len(chunks)} chunks | {final_name}"
+    result = pipeline.ingest(url, category=category, language=language)
+    if result.success:
+        return True, result.message
+    else:
+        return False, result.message or "already_exists"
 
 
 def run_crawl_target(client, target: dict) -> dict:

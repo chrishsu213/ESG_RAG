@@ -8,6 +8,7 @@ admin_ui/app.py — RAG 知識庫管理介面
 import os
 import sys
 import time
+import uuid
 import pandas as pd
 import streamlit as st
 
@@ -283,7 +284,9 @@ elif page == "📤 上傳與匯入":
         
         if uploaded_file and st.button("🔍 解析並預覽", type="primary", key="parse_preview"):
             os.makedirs("../raw_data", exist_ok=True)
-            temp_path = os.path.join("../raw_data", uploaded_file.name)
+            # 使用 uuid4 重命名避免 Path Traversal 攻擊
+            safe_ext = os.path.splitext(uploaded_file.name)[1].lower()
+            temp_path = os.path.join("../raw_data", f"{uuid.uuid4().hex}{safe_ext}")
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             

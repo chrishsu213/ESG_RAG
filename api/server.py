@@ -13,9 +13,11 @@ api/server.py — FastAPI 服務
 """
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from contextlib import asynccontextmanager
+import logging
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Security, Depends
@@ -32,12 +34,16 @@ from modules.retriever import SemanticRetriever
 from modules.rag_chat import RagChat
 
 
-# ── Supabase Client ──────────────────────────────────
+logger = logging.getLogger(__name__)
+
+# ── Supabase Client（Singleton）────────────────────────
+@functools.lru_cache(maxsize=1)
 def get_supabase():
+    """全域共用單一 Supabase 連線，避免每次請求重建 HTTP Session。"""
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
-# ── API Key 驗證 ─────────────────────────────────────
+# ── API Key 驗證（Fail-Closed）────────────────────────
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 # 從環境變數取得允許的 API key 列表（逗號分隔）
 ALLOWED_API_KEYS = set(
@@ -45,12 +51,19 @@ ALLOWED_API_KEYS = set(
     for k in os.getenv("RAG_API_KEYS", "").split(",")
     if k.strip()
 )
+_IS_PRODUCTION = os.getenv("ENV", "").lower() == "production"
 
 
-async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
-    """驗證 API Key。若未設定 RAG_API_KEYS 環境變數，則不驗證。"""
+def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
+    """驗證 API Key。
+    - 生產環境（ENV=production）：未設定 RAG_API_KEYS 時拒絕所有請求（Fail-Closed）。
+    - 開發環境：未設定 RAG_API_KEYS 時放行（方便本地測試）。
+    """
     if not ALLOWED_API_KEYS:
-        return  # 未設定 → 不驗證（開發模式）
+        if _IS_PRODUCTION:
+            logger.error("生產環境未設定 RAG_API_KEYS，拒絕所有 API 請求")
+            raise HTTPException(status_code=503, detail="API 尚未設定驗證金鑰，請聯繫管理員")
+        return  # 開發模式 → 不驗證
     if not api_key or api_key not in ALLOWED_API_KEYS:
         raise HTTPException(status_code=403, detail="無效的 API Key")
 
@@ -153,7 +166,7 @@ async def health_check():
 
 
 @app.get("/api/stats", response_model=StatsResponse)
-async def get_stats(_=Depends(verify_api_key)):
+def get_stats(_=Depends(verify_api_key)):
     """取得知識庫統計資訊。"""
     client = get_supabase()
     try:
@@ -179,7 +192,7 @@ async def get_stats(_=Depends(verify_api_key)):
 
 
 @app.post("/api/search", response_model=SearchResponse)
-async def search(req: SearchRequest, _=Depends(verify_api_key)):
+def search(req: SearchRequest, _=Depends(verify_api_key)):
     """搜尋知識庫，回傳相關段落。"""
     client = get_supabase()
     retriever = SemanticRetriever(client)
@@ -226,7 +239,7 @@ async def search(req: SearchRequest, _=Depends(verify_api_key)):
 
 
 @app.post("/api/ask", response_model=AskResponse)
-async def ask(req: AskRequest, _=Depends(verify_api_key)):
+def ask(req: AskRequest, _=Depends(verify_api_key)):
     """RAG 問答：搜尋知識庫 + AI 生成答案 + 引用出處。"""
     client = get_supabase()
     rag = RagChat(client)

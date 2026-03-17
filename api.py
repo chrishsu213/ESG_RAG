@@ -1,8 +1,8 @@
 """
-api.py — FastAPI REST 服務
+api.py — FastAPI REST 服務（舊版入口）
 
 提供兩個端點：
-  POST /ingest  — 處理本地檔案或 URL，執行完整 Pipeline（解析、清洗、切割、嵌入、入庫）
+  POST /ingest  — 處理本地檔案或 URL，執行完整 Pipeline
   POST /search  — 語義搜尋 RAG 知識庫
 
 啟動方式：
@@ -23,6 +23,7 @@ from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
 from modules.retriever import SemanticRetriever
+from modules.pipeline import DocumentIngestionPipeline
 
 app = FastAPI(
     title="TCC RAG 知識庫 API",
@@ -84,88 +85,28 @@ class SearchResponse(BaseModel):
 @app.post("/ingest", response_model=IngestResponse, tags=["Ingestion"])
 def ingest_document(req: IngestRequest):
     """
-    處理一份文件（PDF / DOCX / URL），執行完整的 RAG Pipeline：
-    解析 → 清洗 → 切割 → 嵌入 → 入庫。
+    處理一份文件（PDF / DOCX / URL），執行完整的 RAG Pipeline。
     """
     try:
-        # 延遲匯入避免啟動時間過長
-        from modules.uploader import Uploader
-        from modules.parser_pdf import PdfParser
-        from modules.parser_docx import DocxParser
-        from modules.parser_url import UrlParser
-        from modules.cleaner import MarkdownCleaner
-        from modules.chunker import SemanticChunker
-        from modules.exporter import SupabaseExporter
-
-        PARSERS = {"pdf": PdfParser, "docx": DocxParser, "url": UrlParser}
-
         client = _get_supabase()
 
-        # 1) 去重
-        uploader = Uploader(client)
-        doc_info = uploader.process(req.source)
-        if doc_info is None:
-            return IngestResponse(
-                success=False,
-                message="文件已存在（重複）或來源無效，已跳過處理。",
-            )
-
-        # 2) 解析
-        parser_cls = PARSERS.get(doc_info["source_type"])
-        if parser_cls is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支援的 source_type: {doc_info['source_type']}",
-            )
-        raw_md = parser_cls().parse(doc_info["source"])
-
-        # 3) 清洗
-        cleaned_md = MarkdownCleaner().clean(raw_md)
-
-        # 4) 切割
-        chunks = SemanticChunker().chunk(cleaned_md)
-
-        # 5) 嵌入
-        embeddings = None
-        if req.do_embed and GEMINI_API_KEY:
-            from modules.embedder import GeminiEmbedder
-
-            embedder = GeminiEmbedder()
-            texts = [c["text_content"] for c in chunks]
-            embeddings = embedder.embed_batch(texts)
-
-        # 6) 入庫（自動推斷分類）
-        _fn = doc_info["file_name"].lower()
-        if doc_info["source_type"] == "pdf":
-            if "永續" in _fn or "sustain" in _fn:
-                cat = "永續報告書"
-            elif "年報" in _fn or "annual" in _fn:
-                cat = "年度報告"
-            else:
-                cat = "其他"
-        else:
-            if "/esg/" in _fn or "esg" in _fn:
-                cat = "ESG專區"
-            elif "news" in _fn or "新聞" in _fn:
-                cat = "新聞"
-            elif "newsletter" in _fn or "電子報" in _fn:
-                cat = "電子報"
-            else:
-                cat = "官網"
-
-        exporter = SupabaseExporter(client)
-        doc_id = exporter.insert_document(
-            doc_info["file_name"], doc_info["file_hash"], doc_info["source_type"],
-            category=cat, report_group=cat,
+        pipeline = DocumentIngestionPipeline(
+            supabase_client=client,
+            gemini_api_key=GEMINI_API_KEY if req.do_embed else None,
         )
-        exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+
+        # 自動推斷分類
+        source_type = "url" if req.source.startswith("http") else "pdf"
+        category = DocumentIngestionPipeline.guess_category(req.source, source_type)
+
+        result = pipeline.ingest(req.source, category=category)
 
         return IngestResponse(
-            success=True,
-            document_id=doc_id,
-            chunks_count=len(chunks),
-            has_embeddings=embeddings is not None,
-            message=f"成功處理 {doc_info['file_name']}",
+            success=result.success,
+            document_id=result.document_id,
+            chunks_count=result.chunks_count,
+            has_embeddings=result.has_embeddings,
+            message=result.message,
         )
 
     except HTTPException:

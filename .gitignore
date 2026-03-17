@@ -24,5 +24,8 @@ raw_data/
 .DS_Store
 Thumbs.db
 
+# Code review bundle
+code_review_bundle.txt
+
 # Gemini Agent
 .gemini/
