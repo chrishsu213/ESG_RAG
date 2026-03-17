@@ -188,6 +188,66 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
   "search_results_count": 5
 }
 ```
+---
+
+### 5. AI 問答串流版 (SSE)
+
+```
+POST /api/ask/stream
+Content-Type: application/json
+X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
+```
+
+**請求參數**：與 `/api/ask` 完全相同。
+
+**回應格式**：`text/event-stream`（Server-Sent Events），逐 token 回傳：
+
+```
+data: {"event": "sources", "sources": [...], "count": 5}
+
+data: {"event": "token", "text": "台泥"}
+data: {"event": "token", "text": "113年度"}
+data: {"event": "token", "text": "合併營收達"}
+...
+
+data: {"event": "done"}
+```
+
+| 事件 | 說明 |
+|------|------|
+| `sources` | 第一個事件，包含引用來源與搜尋筆數 |
+| `token` | 逐 token 的 AI 回答文字 |
+| `done` | 串流結束信號 |
+| `error` | 發生錯誤時回傳，包含 `detail` 欄位 |
+
+**JavaScript 串接範例**：
+```javascript
+const res = await fetch(`${API_URL}/api/ask/stream`, {
+  method: "POST",
+  headers: { "X-API-Key": API_KEY, "Content-Type": "application/json" },
+  body: JSON.stringify({ question: "台泥碳排目標" })
+});
+
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let answer = "";
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  const lines = decoder.decode(value).split("\n");
+  for (const line of lines) {
+    if (!line.startsWith("data: ")) continue;
+    const event = JSON.parse(line.slice(6));
+    if (event.event === "token") {
+      answer += event.text;
+      // 即時更新 UI
+    } else if (event.event === "done") {
+      // 串流結束
+    }
+  }
+}
+```
 
 ---
 
