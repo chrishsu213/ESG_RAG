@@ -33,7 +33,7 @@ class VisionPdfParser:
         進度回呼 (current_page, total_pages, mode_used)。
     """
 
-    _VISION_MODEL = "gemini-3-flash-preview"
+    _VISION_MODEL = "gemini-2.0-flash"  # Vertex AI GA
     _MAX_RETRIES = 3
     _RETRY_DELAY = 2.0
     _BATCH_PAGE_LIMIT = 15  # 整份 PDF 上傳時，每批最多頁數

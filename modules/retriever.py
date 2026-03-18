@@ -37,8 +37,8 @@ class SemanticRetriever:
     - rerank()        → 用 Gemini 對結果精排
     """
 
-    _RERANK_MODEL = "gemini-3-flash-preview"
-    _EXPAND_MODEL = "gemini-flash-lite-latest"  # 極快、極便宜，用於查詢展開
+    _RERANK_MODEL = "gemini-2.0-flash"  # Vertex AI GA
+    _EXPAND_MODEL = "gemini-2.0-flash-lite"   # 極快、極便宜，用於查詢展開
 
     def __init__(
         self,

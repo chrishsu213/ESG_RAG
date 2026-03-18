@@ -29,7 +29,7 @@ class AudioParser:
     - 套用專有名詞字典
     """
 
-    _MODEL = "gemini-3-flash-preview"
+    _MODEL = "gemini-2.0-flash"  # Vertex AI GA
     _MAX_RETRIES = 3
     _RETRY_DELAY = 3.0
 

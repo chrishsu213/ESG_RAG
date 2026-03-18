@@ -27,7 +27,7 @@ class AiProofreader:
     - 修正明顯的 OCR 識別錯誤
     """
 
-    _MODEL = "gemini-flash-lite-latest"
+    _MODEL = "gemini-2.0-flash-lite"  # Vertex AI GA，極快省費
     _MAX_RETRIES = 3
     _RETRY_DELAY = 2.0
 

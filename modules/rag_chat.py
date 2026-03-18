@@ -35,7 +35,7 @@ class RagChat:
     3. 呼叫 Gemini 生成答案 + 引用出處
     """
 
-    _CHAT_MODEL = "gemini-3-flash-preview"
+    _CHAT_MODEL = "gemini-2.0-flash"
 
     _SYSTEM_PROMPT = """你是一位嚴謹的 ESG 與財務分析助理。請嚴格遵守以下規則：
 
