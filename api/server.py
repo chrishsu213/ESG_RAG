@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 # 確保上層模組可 import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, DEFAULT_GROUP
+from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DEFAULT_GROUP
 from supabase import create_client
 from modules.retriever import SemanticRetriever
 from modules.rag_chat import RagChat
