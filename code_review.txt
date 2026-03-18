@@ -1,3 +1,7 @@
+# ESG RAG 系統完整程式碼 — 供外部審查
+# 打包時間：2026-03-18 10:52
+# 共 9 個檔案
+
 ============================================================
 FILE: modules/rag_chat.py
 ============================================================
@@ -387,21 +391,20 @@ class RagChat:
             output_tokens = 0
 
             try:
-                # 使用真串流 API，不需要人工 sleep
-                response = self._genai.models.generate_content(
+                # 使用真串流 API（google-genai SDK >= 1.0 的正確方法）
+                response = self._genai.models.generate_content_stream(
                     model=_model,
                     contents=messages,
                     config=types.GenerateContentConfig(
                         temperature=0.1,
                         response_modalities=["TEXT"],
                     ),
-                    stream=True,
                 )
 
                 for chunk in response:
                     if hasattr(chunk, "text") and chunk.text:
                         collected_text.append(chunk.text)
-                        yield chunk.text  # 直接 yield，Streamlit 內建平滑動畫
+                        yield chunk.text  # 真正的毫秒級串流
 
                     # 攔截最後一個 chunk 夾帶的官方精確 Token 數據
                     if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
@@ -409,22 +412,29 @@ class RagChat:
                         input_tokens = getattr(um, "prompt_token_count", 0) or 0
                         output_tokens = getattr(um, "candidates_token_count", 0) or 0
 
-            except (AttributeError, TypeError):
-                # Fallback: 同步生成
-                response = self._genai.models.generate_content(
-                    model=_model,
-                    contents=messages,
-                    config=types.GenerateContentConfig(temperature=0.1),
-                )
-                text = response.text.strip()
-                collected_text.append(text)
+            except Exception as stream_err:
+                # Fallback: 串流不可用時退回同步生成
+                logger.warning(f"[RAG] 串流失敗，退回同步生成：{type(stream_err).__name__}")
+                try:
+                    response = self._genai.models.generate_content(
+                        model=_model,
+                        contents=messages,
+                        config=types.GenerateContentConfig(temperature=0.1),
+                    )
+                    text = response.text.strip()
+                    collected_text.append(text)
 
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    um = response.usage_metadata
-                    input_tokens = getattr(um, "prompt_token_count", 0) or 0
-                    output_tokens = getattr(um, "candidates_token_count", 0) or 0
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        um = response.usage_metadata
+                        input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(um, "candidates_token_count", 0) or 0
 
-                yield text
+                    yield text
+                except Exception as sync_err:
+                    error_msg = f"\n\n[系統提示：生成過程發生異常 ({type(sync_err).__name__})]"
+                    collected_text.append(error_msg)
+                    logger.error(f"[RAG] 同步生成也失敗：{sync_err}")
+                    yield error_msg
 
             finally:
                 # generator 消耗完畢後自動寫入 Log
@@ -461,6 +471,1009 @@ class RagChat:
             "search_results": results,
             "stream": token_stream(),
         }
+
+
+============================================================
+FILE: modules/retriever.py
+============================================================
+"""
+modules/retriever.py — 語義搜尋 / 混合搜尋 / Re-ranking 模組
+封裝 Supabase RPC 呼叫，提供多種搜尋模式。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Any, Optional
+
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from google import genai
+from google.genai import types
+from supabase import Client
+
+from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION
+
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        """langsmith 未安裝時的 no-op decorator。"""
+        def decorator(fn):
+            return fn
+        return decorator if not args or not callable(args[0]) else args[0]
+
+
+class SemanticRetriever:
+    """
+    多模式搜尋器：
+    - search()        → 純向量搜尋
+    - hybrid_search() → 向量 + 全文混合搜尋 (RRF)
+    - rerank()        → 用 Gemini 對結果精排
+    """
+
+    _RERANK_MODEL = "gemini-3-flash-preview"
+    _EXPAND_MODEL = "gemini-flash-lite-latest"  # 極快、極便宜，用於查詢展開
+
+    def __init__(
+        self,
+        supabase_client: Client,
+        api_key: Optional[str] = None,
+    ) -> None:
+        key = api_key or GEMINI_API_KEY
+        if not key:
+            raise ValueError("未提供 GEMINI_API_KEY")
+        self._client = supabase_client
+        self._genai = genai.Client(api_key=key)
+        self._model = EMBEDDING_MODEL
+
+    @traceable(name="embed_query")
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5), reraise=True)
+    def _embed_query(self, query: str) -> list[float]:
+        """將查詢文字轉為向量（帶重試，防止並行 Rate Limit）。"""
+        result = self._genai.models.embed_content(
+            model=self._model,
+            contents=[query],
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_QUERY",
+                output_dimensionality=EMBEDDING_DIMENSION,
+            ),
+        )
+        return result.embeddings[0].values
+
+    # ── 純向量搜尋 ─────────────────────────────────────
+    @traceable(name="vector_search")
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        threshold: float = 0.5,
+        language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """純向量語義搜尋（使用 match_chunks RPC）。
+        language: 若指定（如 'en'），只搜該語言的文件。
+        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
+        """
+        query_embedding = self._embed_query(query)
+        params = {
+            "query_embedding": query_embedding,
+            "match_count": top_k,
+            "match_threshold": threshold,
+        }
+        if language:
+            params["filter_language"] = language
+        if fiscal_year:
+            params["filter_fiscal_year"] = fiscal_year
+        result = self._client.rpc("match_chunks", params).execute()
+        return self._apply_time_weight(result.data or [])
+
+    # ── 混合搜尋 ───────────────────────────────────────
+    @traceable(name="hybrid_search")
+    def hybrid_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        threshold: float = 0.3,
+        language: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
+        expand_query: bool = True,
+    ) -> list[dict[str, Any]]:
+        """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。
+        language: 若指定（如 'en'），只搜該語言的文件。
+        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
+        expand_query: 是否展開查詢以提升召回率。
+        如果 hybrid RPC 尚未建立，自動退回純向量搜尋。
+        """
+        # 建立查詢清單（原始 + 展開）
+        queries = [query]
+        if expand_query:
+            expanded = self._expand_query(query)
+            queries.extend(expanded)
+
+        all_results = []
+        seen_ids = set()
+
+        def _fetch_single(q: str) -> list[dict]:
+            """單一查詢的檢索遏輯（用於平行執行）。"""
+            q_embedding = self._embed_query(q)
+            params = {
+                "query_embedding": q_embedding,
+                "query_text": q,
+                "match_count": top_k,
+                "match_threshold": threshold,
+            }
+            if language:
+                params["filter_language"] = language
+            if fiscal_year:
+                params["filter_fiscal_year"] = fiscal_year
+            return self._client.rpc("match_chunks_hybrid", params).execute().data or []
+
+        logger = logging.getLogger(__name__)
+        try:
+            # 平行發射多個檢索請求
+            with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+                future_to_q = {executor.submit(_fetch_single, q): q for q in queries}
+                for future in as_completed(future_to_q):
+                    try:
+                        for r in future.result():
+                            rid = r.get("id")
+                            if rid and rid not in seen_ids:
+                                seen_ids.add(rid)
+                                all_results.append(r)
+                    except Exception as e:
+                        # 錯誤隔離：單一子查詢失敗不影響其他結果
+                        failed_q = future_to_q[future]
+                        logger.warning(f"[RETRIEVER] 子查詢 '{failed_q}' 檢索失敗，略過：{e}")
+        except Exception as e:
+            if "match_chunks_hybrid" in str(e):
+                logger.info("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
+                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
+            raise
+
+        return self._apply_time_weight(all_results)
+
+    # ── Re-ranking ─────────────────────────────────────
+    @traceable(name="rerank")
+    def rerank(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """
+        用 Gemini 對搜尋結果精排。
+        讓 AI 評分每個結果與問題的相關性，重新排序。
+        """
+        if not results:
+            return results
+
+        # 組合 prompt
+        docs_text = ""
+        for i, r in enumerate(results):
+            snippet = r["text_content"][:500]
+            docs_text += f"\n[文件{i+1}] {snippet}\n"
+
+        prompt = f"""你是一位資訊檢索專家。以下是使用者的問題和多個候選文件片段。
+請根據每個文件與問題的相關性，輸出排序後的文件編號（最相關的排在前面）。
+只輸出 JSON 陣列，例如 [3, 1, 5, 2, 4]。不要輸出其他文字。
+
+使用者問題：{query}
+
+候選文件：
+{docs_text}
+
+請輸出排序後的文件編號 JSON 陣列："""
+
+        try:
+            response = self._genai.models.generate_content(
+                model=self._RERANK_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",  # 強制 JSON 輸出
+                ),
+            )
+            # 解析 JSON 陣列
+            ranking = json.loads(response.text.strip())
+
+            # 根據排序重組結果
+            reranked = []
+            for idx in ranking:
+                if isinstance(idx, int) and 1 <= idx <= len(results):
+                    reranked.append(results[idx - 1])
+            # 加入未被排到的結果
+            for r in results:
+                if r not in reranked:
+                    reranked.append(r)
+
+            return reranked[:top_k]
+        except Exception as e:
+            print(f"[RERANK] Re-ranking 失敗，返回原始排序：{e}")
+            return results[:top_k]
+
+    # ── 查詢展開 ───────────────────────────────────────
+    @traceable(name="expand_query")
+    def _expand_query(self, query: str) -> list[str]:
+        """用 Gemini Flash 將使用者查詢展開為 2 個替代查詢。
+        
+        若展開失敗（如 API 異常），回傳空列表，不影響原始搜尋。
+        """
+        if len(query) > 100:  # 查詢已經夠長，不需展開
+            return []
+
+        prompt = f"""你是 ESG 與財務資訊檢索專家。使用者輸入了一個搜尋查詢，請將它改寫為 2 個更精確的替代查詢，用於搜尋企業永續報告、財務報告等知識庫。
+
+規則：
+1. 保持與原始查詢相同的意圖，不要偏離主題
+2. 補充可能的專業術語、全名、同義詞
+3. 只輸出 JSON 陣列，例如 ["查詢1", "查詢2"]
+
+原始查詢：{query}
+
+輸出 JSON 陣列："""
+
+        try:
+            response = self._genai.models.generate_content(
+                model=self._EXPAND_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                ),
+            )
+            raw_text = response.text.strip()
+            # 防禦性解析：清理可能的 Markdown code block 標記
+            json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+            clean_text = json_match.group(0) if json_match else raw_text
+            expanded = json.loads(clean_text)
+            if isinstance(expanded, list):
+                return [str(q).strip() for q in expanded[:2] if q and str(q).strip()]
+        except json.JSONDecodeError as e:
+            print(f"[RETRIEVER] 查詢展開 JSON 解析失敗：{e}")
+        except Exception as e:
+            print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
+        return []
+
+    # ── 時間加權排序 ───────────────────────────────────
+    @staticmethod
+    def _apply_time_weight(
+        results: list[dict[str, Any]],
+        time_weight: float = 0.1,
+    ) -> list[dict[str, Any]]:
+        """根據 fiscal_year 對搜尋結果做軟排序加權。
+
+        公式：adjusted_score = similarity * (1 - time_weight) + year_score * time_weight
+        year_score = 0~1，當年度為 1.0，每差一年遞減 0.15。
+        """
+        if not results:
+            return results
+
+        current_year = datetime.now().year
+
+        for r in results:
+            fy = r.get("fiscal_year")
+            year_score = 0.7  # 未填年度給予中性偏高權重，避免懲罰未標記的新文件
+            if fy:
+                # 嘗試從 fiscal_year 提取數字年份（支援民國年 3 位數 + 西元年 4 位數）
+                match = re.search(r"(\d{3,4})", str(fy))
+                if match:
+                    doc_year = int(match.group(1))
+                    if doc_year < 1911:  # 民國年轉換（如 113 → 2024）
+                        doc_year += 1911
+                    years_diff = max(0, current_year - doc_year)
+                    year_score = max(0, 1.0 - years_diff * 0.15)
+
+            sim = r.get("similarity", 0) or 0
+            r["adjusted_score"] = sim * (1 - time_weight) + year_score * time_weight
+
+        results.sort(key=lambda x: x.get("adjusted_score", 0), reverse=True)
+        return results
+
+
+============================================================
+FILE: modules/cleaner.py
+============================================================
+"""
+modules/cleaner.py — 模組 2d：通用 Markdown 清洗器
+過濾無意義的頁首、頁尾、頁碼、目錄頁，正規化空白行。
+"""
+from __future__ import annotations
+
+import re
+from config import HEADER_FOOTER_PATTERNS
+
+
+class MarkdownCleaner:
+    """對 raw Markdown 字串執行清洗規則。"""
+
+    # 目錄條目模式：標題 + 點線/空格 + 頁碼
+    _TOC_LINE_PATTERNS = [
+        re.compile(r"^.{2,60}[.\s·…]{3,}\s*\d{1,4}\s*$"),   # 章節名稱 ...... 42
+        re.compile(r"^.{2,60}\s{3,}\d{1,4}\s*$"),            # 章節名稱         42
+        re.compile(r"^[.\s·…]{5,}$"),                        # 純點線行
+    ]
+
+    # 目錄區段標題關鍵字
+    # 目錄區段標題關鍵字
+    _TOC_SECTION_KEYWORDS = ["目錄", "目 錄", "Table of Contents", "CONTENTS", "contents"]
+
+    # 導覽列模式（永續報告書常見的頂部/底部標籤列）
+    _NAV_BAR_RE = re.compile(
+        r"^(Overview|治理|減碳|增綠|自然|共融|附錄)"
+        r"(\s+(Overview|治理|減碳|增綠|自然|共融|附錄))+\s*$"
+    )
+
+    # 亂碼偵測：一行中有過多替換字元
+    _GARBLED_RE = re.compile(r"[\ufffd]{2,}")
+
+    def __init__(self) -> None:
+        self._patterns = [re.compile(p, re.MULTILINE) for p in HEADER_FOOTER_PATTERNS]
+
+    def clean(self, raw_md: str) -> str:
+        """
+        清洗主流程：
+
+        1. 移除整段目錄區段（由「目錄」標題起始的區段）
+        2. 移除符合頁首/頁尾/頁碼 pattern 的行
+        3. 移除目錄條目行（標題 + 點線 + 頁碼）
+        4. 正規化連續空行（最多保留一行空行）
+        5. 移除行尾多餘空白
+
+        Returns
+        -------
+        str
+            清洗後的 Markdown 字串。
+        """
+        # 先移除整段目錄區段
+        raw_md = self._remove_toc_sections(raw_md)
+
+        lines = raw_md.splitlines()
+        cleaned: list[str] = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            # 過濾符合任一頁首/頁尾 pattern 的行
+            if stripped and any(p.match(stripped) for p in self._patterns):
+                continue
+
+            # 過濾導覽列
+            if stripped and self._NAV_BAR_RE.match(stripped):
+                continue
+
+            # 過濾亂碼行（包含連續替換字元）
+            if stripped and self._GARBLED_RE.search(stripped):
+                continue
+
+            # 過濾目錄條目行
+            if stripped and any(p.match(stripped) for p in self._TOC_LINE_PATTERNS):
+                continue
+
+            cleaned.append(line.rstrip())
+
+        text = "\n".join(cleaned)
+
+        # ── Heading 正規化（攔截 Gemini 的不確定性輸出）────
+        # 修復 1：獨立成行的加粗文字帶編號 → 轉為 ## 標題
+        # 匹配如：**1.0 溫室氣體盤查**、**壹、公司治理**、**第一章 概述**
+        text = re.sub(
+            r"^\*\*\s*((?:[\d]+[\.\-][\d]*\s*|[壹貳參肆伍陸柒捌玖拾]、|[一二三四五六七八九十]+、|第[一二三四五六七八九十\d]+[章節篇])\s*.+?)\*\*\s*$",
+            r"## \1",
+            text,
+            flags=re.MULTILINE,
+        )
+        # 修復 1b：獨立成行的純加粗短句（無編號但長度 < 40）→ 轉為 ### 標題
+        text = re.sub(
+            r"^\*\*([^*\n]{3,40})\*\*\s*$",
+            r"### \1",
+            text,
+            flags=re.MULTILINE,
+        )
+
+        # 修復 2：##字 → ## 字（標題與文字之間補空格）
+        text = re.sub(
+            r"^(#{1,6})([^\s#])",
+            r"\1 \2",
+            text,
+            flags=re.MULTILINE,
+        )
+
+        # 正規化多餘空行（最多保留一個空行）
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        # 移除開頭 / 結尾的空白
+        text = text.strip()
+
+        return text
+
+    def _remove_toc_sections(self, text: str) -> str:
+        """
+        移除以「目錄」為標題的整段區段。
+        從「# 目錄」或「## 目錄」開始，到下一個同級或更高級標題結束。
+        """
+        lines = text.splitlines()
+        result: list[str] = []
+        in_toc = False
+        toc_heading_level = 0
+
+        for line in lines:
+            stripped = line.strip()
+
+            # 檢查是否是標題行
+            heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+
+            if heading_match:
+                level = len(heading_match.group(1))
+                title = heading_match.group(2).strip()
+
+                if in_toc:
+                    # 遇到同級或更高級的標題 → 結束目錄區段
+                    if level <= toc_heading_level:
+                        in_toc = False
+                        result.append(line)
+                    # 否則仍在目錄區段內，跳過
+                    continue
+
+                # 檢查是否是目錄標題
+                if any(kw in title for kw in self._TOC_SECTION_KEYWORDS):
+                    in_toc = True
+                    toc_heading_level = level
+                    continue
+
+            if in_toc:
+                continue
+
+            result.append(line)
+
+        return "\n".join(result)
+
+
+============================================================
+FILE: modules/chunker.py
+============================================================
+"""
+modules/chunker.py — 模組 3：Semantic Chunker
+基於 Markdown 標題的語義切割，相鄰 Chunk 保留 ~100 字元 overlap。
+"""
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from config import CHUNK_OVERLAP_CHARS, MIN_CHUNK_LENGTH, MAX_CHUNK_LENGTH
+
+
+class SemanticChunker:
+    """
+    Header-based 語義切割器：
+    以 Markdown 標題 (# ~ ######) 為邊界拆分 chunk，
+    每個 chunk 盡量包含一個完整章節概念。
+    超過 MAX_CHUNK_LENGTH 的 chunk 會自動在段落邊界處再分割。
+    """
+
+    _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+    _PAGE_MARKER_RE = re.compile(r"<!-- PAGE:(\d+) -->", re.MULTILINE)
+
+    def __init__(self, overlap: int = CHUNK_OVERLAP_CHARS) -> None:
+        self.overlap = overlap
+        self.max_length = MAX_CHUNK_LENGTH
+
+    def chunk(self, markdown: str) -> list[dict[str, Any]]:
+        """
+        將 Markdown 文本切割為 chunk 列表。
+        """
+        sections = self._split_by_heading(markdown)
+
+        # 合併過短的片段到前一個 section
+        merged = self._merge_short_sections(sections)
+
+        # 分割過長的片段
+        split_sections: list[dict] = []
+        for sec in merged:
+            if len(sec["text"]) > self.max_length:
+                split_sections.extend(self._split_long_section(sec))
+            else:
+                split_sections.append(sec)
+
+        # 產生帶 overlap 的 chunks
+        chunks: list[dict[str, Any]] = []
+        for idx, section in enumerate(split_sections):
+            text = section["text"]
+
+            # 加入前一個 chunk 的尾部 overlap
+            if idx > 0 and self.overlap > 0:
+                prev_text = split_sections[idx - 1]["text"]
+                overlap_text = prev_text[-self.overlap:]
+                text = overlap_text + "\n" + text
+
+            # 提取頁碼範圍
+            page_start, page_end = self._extract_page_range(text)
+
+            # 移除頁碼標記
+            clean_text = self._PAGE_MARKER_RE.sub("", text).strip()
+
+            chunks.append({
+                "chunk_index": idx,
+                "text_content": clean_text,
+                "metadata": {
+                    "section_title": section.get("title", ""),
+                    "heading_level": section.get("level"),
+                    "page_start": page_start,
+                    "page_end": page_end,
+                },
+            })
+
+        return chunks
+
+    # ── 內部方法 ─────────────────────────────────────
+    def _split_by_heading(self, markdown: str) -> list[dict]:
+        """
+        依 Markdown 標題行拆分為 section 列表。
+        每個 section = {title, level, text}
+        """
+        sections: list[dict] = []
+        # 找出所有標題位置
+        matches = list(self._HEADING_RE.finditer(markdown))
+
+        if not matches:
+            # 整份文件沒有任何標題 → 視為單一 section
+            return [{"title": "", "level": None, "text": markdown.strip()}]
+
+        # 標題前的文字（如果有的話）
+        first_start = matches[0].start()
+        if first_start > 0:
+            preamble = markdown[:first_start].strip()
+            if preamble:
+                sections.append({"title": "(前言)", "level": None, "text": preamble})
+
+        for i, match in enumerate(matches):
+            level = len(match.group(1))
+            title = match.group(2).strip()
+            start = match.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
+            text = markdown[start:end].strip()
+            sections.append({"title": title, "level": level, "text": text})
+
+        return sections
+
+    def _merge_short_sections(self, sections: list[dict]) -> list[dict]:
+        """將過短的 section 合併到前一個 section。"""
+        if not sections:
+            return sections
+
+        merged: list[dict] = [sections[0]]
+        for sec in sections[1:]:
+            if len(sec["text"]) < MIN_CHUNK_LENGTH and merged:
+                # 合併到前一個
+                merged[-1]["text"] += "\n\n" + sec["text"]
+            else:
+                merged.append(sec)
+
+        return merged
+
+    def _split_long_section(self, section: dict) -> list[dict]:
+        """將過長的 section 在段落邊界處分割為多個較短的 section。"""
+        text = section["text"]
+        title = section.get("title", "")
+        level = section.get("level")
+
+        # 以雙換行分段
+        paragraphs = re.split(r"\n\s*\n", text)
+        
+        sub_sections: list[dict] = []
+        current_text = ""
+
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+
+            # 如果加入這段後會超過上限，先存起來
+            if current_text and len(current_text) + len(para) + 2 > self.max_length:
+                sub_sections.append(current_text)
+                current_text = para
+            else:
+                current_text = current_text + "\n\n" + para if current_text else para
+
+        if current_text:
+            sub_sections.append(current_text)
+
+        # 轉為 section dict 列表
+        if len(sub_sections) <= 1:
+            return [section]
+
+        return [
+            {
+                "title": f"{title} ({i+1}/{len(sub_sections)})" if title else "",
+                "level": level,
+                "text": sub_text,
+            }
+            for i, sub_text in enumerate(sub_sections)
+        ]
+
+    @classmethod
+    def _extract_page_range(cls, text: str) -> tuple[int | None, int | None]:
+        """從文本中提取頁碼範圍（由 PDF Parser 插入的 <!-- PAGE:N --> 標記）。"""
+        pages = [int(m.group(1)) for m in cls._PAGE_MARKER_RE.finditer(text)]
+        if not pages:
+            return None, None
+        return min(pages), max(pages)
+
+
+============================================================
+FILE: modules/parser_pdf_vision.py
+============================================================
+"""
+modules/parser_pdf_vision.py — Gemini Vision PDF 解析器
+將 PDF 每頁轉為圖片，送入 Gemini Vision 進行高品質 Markdown 轉換。
+支援混合模式：純文字頁走 PyMuPDF（免費），圖表/掃描頁走 Vision（付費）。
+"""
+from __future__ import annotations
+
+import io
+import time
+from typing import Callable, Optional
+
+import fitz  # PyMuPDF
+from google import genai
+from google.genai import types
+
+from config import GEMINI_API_KEY
+
+
+class VisionPdfParser:
+    """
+    使用 Gemini Vision 解析 PDF，自動判斷每頁是否需要 Vision 輔助。
+
+    Parameters
+    ----------
+    mode : str
+        "auto"  - 自動判斷：文字少的頁面用 Vision，文字多的走 PyMuPDF（推薦）
+        "vision" - 所有頁面都用 Vision（品質最高，費用最高）
+        "text"   - 所有頁面都走 PyMuPDF（免費，與舊版相同）
+    text_threshold : int
+        auto 模式下，少於此字數的頁面會切換為 Vision 模式。
+    on_progress : Callable | None
+        進度回呼 (current_page, total_pages, mode_used)。
+    """
+
+    _VISION_MODEL = "gemini-3-flash-preview"
+    _MAX_RETRIES = 3
+    _RETRY_DELAY = 2.0
+    _BATCH_PAGE_LIMIT = 15  # 整份 PDF 上傳時，每批最多頁數
+
+    _VISION_PROMPT = """你是一位專業的文件數位化專家。請將此 PDF 頁面的所有內容轉換為結構化的 Markdown 格式。
+
+**頁面類型判斷**：
+- 如果是「資訊圖表頁」（散佈的數據、KPI 指標、圓餅圖等），請將每個數據點整理為「**標籤**：數值」格式，按照左到右、上到下的區塊順序排列
+- 如果是「文字內容頁」，保持原有段落結構
+- 如果是目錄或封面，標註「[目錄頁]」或「[封面頁]」
+
+**閱讀順序規則**：
+- 多欄排版：先完整讀完左欄，再讀右欄
+- 不要交錯混合不同欄的內容
+
+**必須排除**：
+- 頁面頂部/底部的導覽列（如 Overview、治理、減碳、增綠 等標籤）
+- 頁碼
+- 頁首頁尾重複出現的文字
+
+**標題層級判定規則（嚴格遵守）**：
+請根據原始 PDF 的視覺排版與字體大小來決定 Markdown 標題層級：
+1. 若該行文字字體最大、且獨立成行 → 強制標記為 `# 標題`
+2. 若該行包含段落編號（如「壹、」「一、」「1.1」「第一章」）且字體加粗獨立成行 → 強制標記為 `## 標題` 或 `### 標題`
+3. **絕對禁止**使用 `**加粗**` 來代替任何獨立成行的標題，必須用 `#` 語法
+4. `#` 號與標題文字之間必須有一個空格（正確：`## 標題`，錯誤：`##標題`）
+
+**其他規則**：
+1. 表格轉為 Markdown 表格
+2. 圖表數據用文字描述：「📊 [圖表標題]：[數據描述]」
+3. 保留數字和專有名詞的準確性
+4. 不要添加原文沒有的內容
+5. 輸出繁體中文
+
+直接輸出 Markdown 內容，不要添加額外說明。"""
+
+    _WHOLE_PDF_PROMPT = """你是一位專業的文件數位化專家。請將此 PDF 文件的所有內容轉換為結構化的 Markdown 格式。
+
+**頁面類型判斷**（每種頁面用不同方式處理）：
+- 「資訊圖表頁」（散佈的 KPI 數據、圓餅圖、統計指標等）→ 整理為「**標籤**：數值」格式，按區塊順序排列
+- 「文字內容頁」→ 保持原有段落結構
+- 「目錄頁/封面頁」→ 跳過，不要輸出
+
+**閱讀順序**：
+- 多欄排版：先完整讀完左欄（上到下），再讀右欄（上到下）
+- 不要交錯混合不同欄的內容
+- 每一頁的開頭加上標記 <!-- PAGE:頁碼 -->
+
+**必須排除**：
+- 頁面頂部/底部的導覽列（如 Overview、治理、減碳、增綠、自然、共融、附錄 等標籤列）
+- 每頁重複出現的公司名稱或報告標題
+- 頁碼
+
+**標題層級判定規則（嚴格遵守）**：
+請根據原始 PDF 的視覺排版與字體大小來決定 Markdown 標題層級：
+1. 若該行文字字體最大、且獨立成行 → 強制標記為 `# 標題`
+2. 若該行包含段落編號（如「壹、」「一、」「1.1」「第一章」）且字體加粗獨立成行 → 強制標記為 `## 標題` 或 `### 標題`
+3. **絕對禁止**使用 `**加粗**` 來代替任何獨立成行的標題，必須用 `#` 語法
+4. `#` 號與標題文字之間必須有一個空格（正確：`## 標題`，錯誤：`##標題`）
+
+**其他規則**：
+1. 表格轉為 Markdown 表格
+2. 圖表數據用文字描述：「📊 [圖表標題]：[數據描述]」
+3. 保留數字和專有名詞的準確性
+4. 不要添加原文沒有的內容
+5. 輸出繁體中文
+
+直接輸出 Markdown 內容，不要添加額外說明。"""
+
+    def __init__(
+        self,
+        mode: str = "auto",
+        text_threshold: int = 100,
+        on_progress: Optional[Callable] = None,
+        api_key: Optional[str] = None,
+    ) -> None:
+        key = api_key or GEMINI_API_KEY
+        if not key:
+            raise ValueError("需要 GEMINI_API_KEY 才能使用 Vision 模式")
+        self._client = genai.Client(api_key=key)
+        self._mode = mode
+        self._text_threshold = text_threshold
+        self._on_progress = on_progress
+
+        # 統計
+        self.stats = {"total_pages": 0, "vision_pages": 0, "text_pages": 0, "skipped_pages": 0}
+
+    def parse(self, file_path: str) -> str:
+        """
+        解析 PDF 檔案，回傳完整的 Markdown 字串。
+        """
+        # 整份 PDF 上傳模式
+        if self._mode == "vision_pdf":
+            return self._parse_whole_pdf(file_path)
+
+        doc = fitz.open(file_path)
+        self.stats["total_pages"] = len(doc)
+        pages_md: list[str] = []
+
+        for page_num, page in enumerate(doc, start=1):
+            if self._on_progress:
+                self._on_progress(page_num, len(doc), "分析中")
+
+            # 先用 PyMuPDF 抽純文字
+            text_content = page.get_text("text").strip()
+            text_len = len(text_content)
+
+            # 決定使用哪種模式
+            if self._mode == "text":
+                use_vision = False
+            elif self._mode == "vision":
+                use_vision = True
+            else:  # auto
+                use_vision = text_len < self._text_threshold
+
+            if use_vision:
+                if self._on_progress:
+                    self._on_progress(page_num, len(doc), "Vision 解讀")
+
+                page_md = self._vision_parse_page(page, page_num)
+                if page_md:
+                    self.stats["vision_pages"] += 1
+                    pages_md.append(page_md)
+                else:
+                    self.stats["skipped_pages"] += 1
+            else:
+                if self._on_progress:
+                    self._on_progress(page_num, len(doc), "文字提取")
+
+                page_md = self._text_parse_page(page)
+                if page_md.strip():
+                    self.stats["text_pages"] += 1
+                    pages_md.append(page_md)
+                else:
+                    self.stats["skipped_pages"] += 1
+
+        doc.close()
+        return "\n\n---\n\n".join(pages_md)
+
+
+    def _parse_whole_pdf(self, file_path: str) -> str:
+        """整份 PDF 上傳給 Gemini。超過 30 頁自動分批處理。"""
+        doc = fitz.open(file_path)
+        total_pages = len(doc)
+        self.stats["total_pages"] = total_pages
+
+        if total_pages <= 30:
+            # 短文件：整份上傳
+            doc.close()
+            if self._on_progress:
+                self._on_progress(1, 1, f"上傳整份 PDF（{total_pages} 頁）至 Gemini...")
+            with open(file_path, "rb") as f:
+                pdf_bytes = f.read()
+            result = self._send_pdf_to_gemini(pdf_bytes, 1, total_pages)
+            self.stats["vision_pages"] = total_pages
+            return result
+        else:
+            # 長文件：分批處理
+            all_results: list[str] = []
+            batch_count = (total_pages + self._BATCH_PAGE_LIMIT - 1) // self._BATCH_PAGE_LIMIT
+
+            for batch_idx in range(batch_count):
+                start_page = batch_idx * self._BATCH_PAGE_LIMIT
+                end_page = min(start_page + self._BATCH_PAGE_LIMIT, total_pages)
+
+                if self._on_progress:
+                    self._on_progress(
+                        batch_idx + 1, batch_count,
+                        f"分批處理中：第 {start_page+1}-{end_page} 頁（共 {total_pages} 頁）"
+                    )
+
+                # 建立子 PDF
+                sub_doc = fitz.open()
+                sub_doc.insert_pdf(doc, from_page=start_page, to_page=end_page - 1)
+                pdf_bytes = sub_doc.tobytes()
+                sub_doc.close()
+
+                batch_result = self._send_pdf_to_gemini(pdf_bytes, start_page + 1, end_page)
+                if batch_result:
+                    all_results.append(batch_result)
+                    self.stats["vision_pages"] += (end_page - start_page)
+
+            doc.close()
+
+            if self._on_progress:
+                self._on_progress(batch_count, batch_count, f"全部完成！共 {total_pages} 頁")
+
+            return "\n\n---\n\n".join(all_results)
+
+    def _send_pdf_to_gemini(self, pdf_bytes: bytes, page_start: int, page_end: int) -> str:
+        """將 PDF bytes 送給 Gemini 解析，帶重試機制。"""
+        import time as _time
+
+        prompt = self._WHOLE_PDF_PROMPT
+        if page_start > 1:
+            # 提示 Gemini 頁碼範圍
+            prompt += f"\n\n注意：這是原始文件的第 {page_start} 至 {page_end} 頁，請在 PAGE 標記中使用這些實際頁碼。"
+
+        last_error = None
+        for attempt in range(1, self._MAX_RETRIES + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._VISION_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_bytes(
+                                    data=pdf_bytes,
+                                    mime_type="application/pdf",
+                                ),
+                                types.Part(text=prompt),
+                            ],
+                        )
+                    ],
+                )
+                return response.text.strip()
+
+            except Exception as e:
+                last_error = e
+                if self._on_progress:
+                    self._on_progress(0, 0, f"重試中... ({e})")
+                _time.sleep(self._RETRY_DELAY * attempt)
+
+        raise RuntimeError(f"PDF 第 {page_start}-{page_end} 頁解析失敗：{last_error}")
+
+    def _vision_parse_page(self, page: fitz.Page, page_num: int) -> str:
+        """用 Gemini Vision 解讀單頁 PDF。"""
+        # 將頁面渲染為高解析度圖片
+        mat = fitz.Matrix(2.0, 2.0)  # 2x 放大以提高辨識率
+        pix = page.get_pixmap(matrix=mat)
+        img_bytes = pix.tobytes("png")
+
+        last_error = None
+        for attempt in range(1, self._MAX_RETRIES + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._VISION_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_bytes(
+                                    data=img_bytes,
+                                    mime_type="image/png",
+                                ),
+                                types.Part.from_text(self._VISION_PROMPT),
+                            ],
+                        )
+                    ],
+                )
+                result_text = response.text.strip()
+
+                # 過濾掉封面頁/目錄頁的標記
+                if "[封面頁]" in result_text or "[目錄頁]" in result_text:
+                    return ""  # 跳過
+
+                return f"<!-- PAGE:{page_num} -->\n" + result_text
+
+            except Exception as e:
+                last_error = e
+                if attempt < self._MAX_RETRIES:
+                    time.sleep(self._RETRY_DELAY * attempt)
+
+        print(f"[VISION] 第 {page_num} 頁解讀失敗：{last_error}")
+        # 回退到文字模式
+        return self._text_parse_page(page)
+
+    def _text_parse_page(self, page: fitz.Page) -> str:
+        """用 PyMuPDF 純文字模式解析單頁（與原有 parser_pdf.py 邏輯類似）。"""
+        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        lines: list[str] = [f"<!-- PAGE:{page.number + 1} -->"]
+
+        for block in blocks:
+            if block["type"] != 0:
+                continue
+
+            for line in block.get("lines", []):
+                spans = line.get("spans", [])
+                if not spans:
+                    continue
+
+                text = "".join(s["text"] for s in spans).strip()
+                if not text:
+                    continue
+
+                max_font_size = max(s["size"] for s in spans)
+                is_bold = any("bold" in s.get("font", "").lower() for s in spans)
+
+                heading = self._detect_heading(text, max_font_size, is_bold)
+                if heading:
+                    lines.append(f"\n{'#' * heading} {text}\n")
+                else:
+                    lines.append(text)
+
+        # 表格提取
+        try:
+            tables = page.find_tables()
+            if tables and len(tables.tables) > 0:
+                for table in tables:
+                    rows = table.extract()
+                    if not rows:
+                        continue
+                    clean_rows = [
+                        [str(c).strip() if c else "" for c in row]
+                        for row in rows
+                    ]
+                    header = clean_rows[0]
+                    sep = ["-" * max(len(h), 3) for h in header]
+                    md = ["| " + " | ".join(header) + " |",
+                          "| " + " | ".join(sep) + " |"]
+                    for row in clean_rows[1:]:
+                        while len(row) < len(header):
+                            row.append("")
+                        md.append("| " + " | ".join(row[:len(header)]) + " |")
+                    lines.append("\n" + "\n".join(md))
+        except Exception:
+            pass
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _detect_heading(text: str, font_size: float, is_bold: bool) -> int | None:
+        if len(text) > 200:
+            return None
+        if font_size >= 20:
+            return 1
+        if font_size >= 16:
+            return 2
+        if font_size >= 13 and is_bold:
+            return 3
+        return None
 
 
 ============================================================
@@ -2125,323 +3138,6 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
 
 
 ============================================================
-FILE: modules/retriever.py
-============================================================
-"""
-modules/retriever.py — 語義搜尋 / 混合搜尋 / Re-ranking 模組
-封裝 Supabase RPC 呼叫，提供多種搜尋模式。
-"""
-from __future__ import annotations
-
-import json
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from typing import Any, Optional
-
-from google import genai
-from google.genai import types
-from supabase import Client
-
-from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION
-
-try:
-    from langsmith import traceable
-except ImportError:
-    def traceable(*args, **kwargs):
-        """langsmith 未安裝時的 no-op decorator。"""
-        def decorator(fn):
-            return fn
-        return decorator if not args or not callable(args[0]) else args[0]
-
-
-class SemanticRetriever:
-    """
-    多模式搜尋器：
-    - search()        → 純向量搜尋
-    - hybrid_search() → 向量 + 全文混合搜尋 (RRF)
-    - rerank()        → 用 Gemini 對結果精排
-    """
-
-    _RERANK_MODEL = "gemini-3-flash-preview"
-    _EXPAND_MODEL = "gemini-flash-lite-latest"  # 極快、極便宜，用於查詢展開
-
-    def __init__(
-        self,
-        supabase_client: Client,
-        api_key: Optional[str] = None,
-    ) -> None:
-        key = api_key or GEMINI_API_KEY
-        if not key:
-            raise ValueError("未提供 GEMINI_API_KEY")
-        self._client = supabase_client
-        self._genai = genai.Client(api_key=key)
-        self._model = EMBEDDING_MODEL
-
-    @traceable(name="embed_query")
-    def _embed_query(self, query: str) -> list[float]:
-        """將查詢文字轉為向量。"""
-        result = self._genai.models.embed_content(
-            model=self._model,
-            contents=[query],
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=EMBEDDING_DIMENSION,
-            ),
-        )
-        return result.embeddings[0].values
-
-    # ── 純向量搜尋 ─────────────────────────────────────
-    @traceable(name="vector_search")
-    def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        threshold: float = 0.5,
-        language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
-        """純向量語義搜尋（使用 match_chunks RPC）。
-        language: 若指定（如 'en'），只搜該語言的文件。
-        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
-        """
-        query_embedding = self._embed_query(query)
-        params = {
-            "query_embedding": query_embedding,
-            "match_count": top_k,
-            "match_threshold": threshold,
-        }
-        if language:
-            params["filter_language"] = language
-        if fiscal_year:
-            params["filter_fiscal_year"] = fiscal_year
-        result = self._client.rpc("match_chunks", params).execute()
-        return self._apply_time_weight(result.data or [])
-
-    # ── 混合搜尋 ───────────────────────────────────────
-    @traceable(name="hybrid_search")
-    def hybrid_search(
-        self,
-        query: str,
-        top_k: int = 5,
-        threshold: float = 0.3,
-        language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
-        expand_query: bool = True,
-    ) -> list[dict[str, Any]]:
-        """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。
-        language: 若指定（如 'en'），只搜該語言的文件。
-        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
-        expand_query: 是否展開查詢以提升召回率。
-        如果 hybrid RPC 尚未建立，自動退回純向量搜尋。
-        """
-        # 建立查詢清單（原始 + 展開）
-        queries = [query]
-        if expand_query:
-            expanded = self._expand_query(query)
-            queries.extend(expanded)
-
-        all_results = []
-        seen_ids = set()
-
-        def _fetch_single(q: str) -> list[dict]:
-            """單一查詢的檢索遏輯（用於平行執行）。"""
-            q_embedding = self._embed_query(q)
-            params = {
-                "query_embedding": q_embedding,
-                "query_text": q,
-                "match_count": top_k,
-                "match_threshold": threshold,
-            }
-            if language:
-                params["filter_language"] = language
-            if fiscal_year:
-                params["filter_fiscal_year"] = fiscal_year
-            return self._client.rpc("match_chunks_hybrid", params).execute().data or []
-
-        try:
-            # 平行發射多個檢索請求
-            with ThreadPoolExecutor(max_workers=len(queries)) as executor:
-                futures = [executor.submit(_fetch_single, q) for q in queries]
-                for future in as_completed(futures):
-                    for r in future.result():
-                        rid = r.get("id")
-                        if rid and rid not in seen_ids:
-                            seen_ids.add(rid)
-                            all_results.append(r)
-        except Exception as e:
-            if "match_chunks_hybrid" in str(e):
-                print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
-                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
-            raise
-
-        return self._apply_time_weight(all_results)
-
-    # ── Re-ranking ─────────────────────────────────────
-    @traceable(name="rerank")
-    def rerank(
-        self,
-        query: str,
-        results: list[dict[str, Any]],
-        top_k: int = 5,
-    ) -> list[dict[str, Any]]:
-        """
-        用 Gemini 對搜尋結果精排。
-        讓 AI 評分每個結果與問題的相關性，重新排序。
-        """
-        if not results:
-            return results
-
-        # 組合 prompt
-        docs_text = ""
-        for i, r in enumerate(results):
-            snippet = r["text_content"][:500]
-            docs_text += f"\n[文件{i+1}] {snippet}\n"
-
-        prompt = f"""你是一位資訊檢索專家。以下是使用者的問題和多個候選文件片段。
-請根據每個文件與問題的相關性，輸出排序後的文件編號（最相關的排在前面）。
-只輸出 JSON 陣列，例如 [3, 1, 5, 2, 4]。不要輸出其他文字。
-
-使用者問題：{query}
-
-候選文件：
-{docs_text}
-
-請輸出排序後的文件編號 JSON 陣列："""
-
-        try:
-            response = self._genai.models.generate_content(
-                model=self._RERANK_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json",  # 強制 JSON 輸出
-                ),
-            )
-            # 解析 JSON 陣列
-            ranking = json.loads(response.text.strip())
-
-            # 根據排序重組結果
-            reranked = []
-            for idx in ranking:
-                if isinstance(idx, int) and 1 <= idx <= len(results):
-                    reranked.append(results[idx - 1])
-            # 加入未被排到的結果
-            for r in results:
-                if r not in reranked:
-                    reranked.append(r)
-
-            return reranked[:top_k]
-        except Exception as e:
-            print(f"[RERANK] Re-ranking 失敗，返回原始排序：{e}")
-            return results[:top_k]
-
-    # ── 查詢展開 ───────────────────────────────────────
-    @traceable(name="expand_query")
-    def _expand_query(self, query: str) -> list[str]:
-        """用 Gemini Flash 將使用者查詢展開為 2 個替代查詢。
-        
-        若展開失敗（如 API 異常），回傳空列表，不影響原始搜尋。
-        """
-        if len(query) > 100:  # 查詢已經夠長，不需展開
-            return []
-
-        prompt = f"""你是 ESG 與財務資訊檢索專家。使用者輸入了一個搜尋查詢，請將它改寫為 2 個更精確的替代查詢，用於搜尋企業永續報告、財務報告等知識庫。
-
-規則：
-1. 保持與原始查詢相同的意圖，不要偏離主題
-2. 補充可能的專業術語、全名、同義詞
-3. 只輸出 JSON 陣列，例如 ["查詢1", "查詢2"]
-
-原始查詢：{query}
-
-輸出 JSON 陣列："""
-
-        try:
-            response = self._genai.models.generate_content(
-                model=self._EXPAND_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                ),
-            )
-            raw_text = response.text.strip()
-            # 防禦性解析：清理可能的 Markdown code block 標記
-            json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
-            clean_text = json_match.group(0) if json_match else raw_text
-            expanded = json.loads(clean_text)
-            if isinstance(expanded, list):
-                return [str(q).strip() for q in expanded[:2] if q and str(q).strip()]
-        except json.JSONDecodeError as e:
-            print(f"[RETRIEVER] 查詢展開 JSON 解析失敗：{e}")
-        except Exception as e:
-            print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
-        return []
-
-    # ── 時間加權排序 ───────────────────────────────────
-    @staticmethod
-    def _apply_time_weight(
-        results: list[dict[str, Any]],
-        time_weight: float = 0.1,
-    ) -> list[dict[str, Any]]:
-        """根據 fiscal_year 對搜尋結果做軟排序加權。
-
-        公式：adjusted_score = similarity * (1 - time_weight) + year_score * time_weight
-        year_score = 0~1，當年度為 1.0，每差一年遞減 0.15。
-        """
-        if not results:
-            return results
-
-        current_year = datetime.now().year
-
-        for r in results:
-            fy = r.get("fiscal_year")
-            year_score = 0.7  # 未填年度給予中性偏高權重，避免懲罰未標記的新文件
-            if fy:
-                # 嘗試從 fiscal_year 提取數字年份（支援民國年 3 位數 + 西元年 4 位數）
-                match = re.search(r"(\d{3,4})", str(fy))
-                if match:
-                    doc_year = int(match.group(1))
-                    if doc_year < 1911:  # 民國年轉換（如 113 → 2024）
-                        doc_year += 1911
-                    years_diff = max(0, current_year - doc_year)
-                    year_score = max(0, 1.0 - years_diff * 0.15)
-
-            sim = r.get("similarity", 0) or 0
-            r["adjusted_score"] = sim * (1 - time_weight) + year_score * time_weight
-
-        results.sort(key=lambda x: x.get("adjusted_score", 0), reverse=True)
-        return results
-
-
-============================================================
-FILE: sql/migrations/009_usage_log.sql
-============================================================
--- 009_usage_log.sql
--- 記錄每次 LLM 呼叫的 token 用量，用於成本追蹤與分析
-
-CREATE TABLE IF NOT EXISTS usage_log (
-    id          BIGSERIAL PRIMARY KEY,
-    source      TEXT NOT NULL DEFAULT 'unknown',  -- 'admin_ui', 'api', 'api_stream'
-    question    TEXT,
-    model       TEXT NOT NULL,
-    input_tokens  INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    total_tokens  INTEGER NOT NULL DEFAULT 0,
-    search_mode TEXT,                              -- 'hybrid', 'vector'
-    fiscal_year TEXT,
-    latency_ms  INTEGER,                          -- 回應耗時（毫秒）
-    created_at  TIMESTAMPTZ DEFAULT now()
-);
-
--- 按日期查詢的索引
-CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log (created_at DESC);
--- 按來源查詢的索引
-CREATE INDEX IF NOT EXISTS idx_usage_log_source ON usage_log (source);
-
-
-============================================================
 FILE: config.py
 ============================================================
 """
@@ -2549,5 +3245,31 @@ HEADER_FOOTER_PATTERNS: list[str] = [
     r"^Page\s+\d+",                       # Page 1
     r"(?i)^(confidential|internal use)",  # 浮水印文字
 ]
+
+
+============================================================
+FILE: sql/migrations/009_usage_log.sql
+============================================================
+-- 009_usage_log.sql
+-- 記錄每次 LLM 呼叫的 token 用量，用於成本追蹤與分析
+
+CREATE TABLE IF NOT EXISTS usage_log (
+    id          BIGSERIAL PRIMARY KEY,
+    source      TEXT NOT NULL DEFAULT 'unknown',  -- 'admin_ui', 'api', 'api_stream'
+    question    TEXT,
+    model       TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens  INTEGER NOT NULL DEFAULT 0,
+    search_mode TEXT,                              -- 'hybrid', 'vector'
+    fiscal_year TEXT,
+    latency_ms  INTEGER,                          -- 回應耗時（毫秒）
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- 按日期查詢的索引
+CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log (created_at DESC);
+-- 按來源查詢的索引
+CREATE INDEX IF NOT EXISTS idx_usage_log_source ON usage_log (source);
 
 

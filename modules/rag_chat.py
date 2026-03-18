@@ -406,28 +406,35 @@ class RagChat:
                         output_tokens = getattr(um, "candidates_token_count", 0) or 0
 
             except Exception as stream_err:
-                # Fallback: 串流不可用時退回同步生成
-                logger.warning(f"[RAG] 串流失敗，退回同步生成：{type(stream_err).__name__}")
-                try:
-                    response = self._genai.models.generate_content(
-                        model=_model,
-                        contents=messages,
-                        config=types.GenerateContentConfig(temperature=0.1),
-                    )
-                    text = response.text.strip()
-                    collected_text.append(text)
-
-                    if hasattr(response, "usage_metadata") and response.usage_metadata:
-                        um = response.usage_metadata
-                        input_tokens = getattr(um, "prompt_token_count", 0) or 0
-                        output_tokens = getattr(um, "candidates_token_count", 0) or 0
-
-                    yield text
-                except Exception as sync_err:
-                    error_msg = f"\n\n[系統提示：生成過程發生異常 ({type(sync_err).__name__})]"
+                if collected_text:
+                    # 已經吐過字 → 中途斷線，只追加錯誤提示，不重做
+                    error_msg = f"\n\n[系統提示：串流連線中斷 ({type(stream_err).__name__})]"
                     collected_text.append(error_msg)
-                    logger.error(f"[RAG] 同步生成也失敗：{sync_err}")
+                    logger.error(f"[RAG] 串流中途失敗：{stream_err}")
                     yield error_msg
+                else:
+                    # 完全沒吐字 → 初始連線失敗，才退回同步生成
+                    logger.warning(f"[RAG] 串流啟動失敗，退回同步生成：{type(stream_err).__name__}")
+                    try:
+                        response = self._genai.models.generate_content(
+                            model=_model,
+                            contents=messages,
+                            config=types.GenerateContentConfig(temperature=0.1),
+                        )
+                        text = response.text.strip()
+                        collected_text.append(text)
+
+                        if hasattr(response, "usage_metadata") and response.usage_metadata:
+                            um = response.usage_metadata
+                            input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                            output_tokens = getattr(um, "candidates_token_count", 0) or 0
+
+                        yield text
+                    except Exception as sync_err:
+                        error_msg = f"\n\n[系統提示：生成過程發生異常 ({type(sync_err).__name__})]"
+                        collected_text.append(error_msg)
+                        logger.error(f"[RAG] 同步生成也失敗：{sync_err}")
+                        yield error_msg
 
             finally:
                 # generator 消耗完畢後自動寫入 Log

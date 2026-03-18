@@ -147,7 +147,10 @@ class SemanticRetriever:
                                 seen_ids.add(rid)
                                 all_results.append(r)
                     except Exception as e:
-                        # 錯誤隔離：單一子查詢失敗不影響其他結果
+                        # RPC 不存在的錯誤必須往外拋，觸發降級機制
+                        if "match_chunks_hybrid" in str(e):
+                            raise
+                        # 其他錯誤（API 超時、Rate Limit）做隔離
                         failed_q = future_to_q[future]
                         logger.warning(f"[RETRIEVER] 子查詢 '{failed_q}' 檢索失敗，略過：{e}")
         except Exception as e:
