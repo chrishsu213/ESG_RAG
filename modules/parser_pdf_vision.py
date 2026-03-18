@@ -109,9 +109,6 @@ class VisionPdfParser:
         on_progress: Optional[Callable] = None,
         api_key: Optional[str] = None,
     ) -> None:
-        key = api_key or GEMINI_API_KEY
-        if not key:
-            raise ValueError("需要 GEMINI_API_KEY 才能使用 Vision 模式")
         from config import get_genai_client
         self._client = get_genai_client(api_key)
         self._mode = mode
