@@ -89,7 +89,8 @@ class AudioParser:
         key = api_key or GEMINI_API_KEY
         if not key:
             raise ValueError("未提供 GEMINI_API_KEY")
-        self._client = genai.Client(api_key=key)
+        from config import get_genai_client
+        self._client = get_genai_client(api_key)
         self._on_progress = on_progress
 
     def parse(

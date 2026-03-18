@@ -23,12 +23,8 @@ class GeminiEmbedder:
     _MAX_BATCH_SIZE = 100       # API 單次上限
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        key = api_key or GEMINI_API_KEY
-        if not key:
-            raise ValueError(
-                "未提供 GEMINI_API_KEY，請在 .env 中設定或傳入 api_key 參數"
-            )
-        self._client = genai.Client(api_key=key)
+        from config import get_genai_client
+        self._client = get_genai_client(api_key)
         self._model = EMBEDDING_MODEL
 
     # ── 單筆嵌入 ──────────────────────────────────────

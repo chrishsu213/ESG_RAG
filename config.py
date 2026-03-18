@@ -112,3 +112,60 @@ COMPARE_KEYWORDS: list[str] = [
     "優於", "落後", "領先", "變化", "趨勢", "成長",
     "vs", "VS", "勝過", "超越",
 ]
+
+# ── Vertex AI / Gemini 設定 ────────────────────────────
+GCP_PROJECT: str = _get_secret("GCP_PROJECT", "tcc-personal-project")
+GCP_LOCATION: str = _get_secret("GCP_LOCATION", "asia-east1")
+
+
+def _setup_streamlit_adc() -> bool:
+    """Streamlit Cloud：將 secrets 中的 service account JSON 寫入暫存檔供 ADC 使用。"""
+    if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+        return True  # 已設定
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "GCP_SERVICE_ACCOUNT" in st.secrets:
+            import json, tempfile
+            sa = dict(st.secrets["GCP_SERVICE_ACCOUNT"])
+            fd, path = tempfile.mkstemp(suffix=".json", prefix="gcp_sa_")
+            with os.fdopen(fd, "w") as f:
+                json.dump(sa, f)
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def get_genai_client(api_key: str | None = None):
+    """建立 genai.Client，優先 Vertex AI，fallback 到 API Key。
+
+    優先順序：
+    1. Vertex AI（Cloud Run ADC / Streamlit service account）
+    2. 傳入的 api_key
+    3. GEMINI_API_KEY 環境變數
+    """
+    from google import genai as _genai
+
+    # 嘗試 Vertex AI
+    try:
+        _setup_streamlit_adc()
+        client = _genai.Client(
+            vertexai=True,
+            project=GCP_PROJECT,
+            location=GCP_LOCATION,
+        )
+        # 快速驗證連線（list models 是輕量操作）
+        _ = client.models.list(config={"page_size": 1})
+        return client
+    except Exception:
+        pass
+
+    # Fallback: API Key
+    key = api_key or _get_secret("GEMINI_API_KEY")
+    if key:
+        return _genai.Client(api_key=key)
+
+    raise ValueError(
+        "無法建立 Gemini 連線：Vertex AI ADC 不可用，且未提供 GEMINI_API_KEY"
+    )

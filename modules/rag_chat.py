@@ -54,11 +54,9 @@ class RagChat:
         supabase_client: Client,
         api_key: Optional[str] = None,
     ) -> None:
-        key = api_key or GEMINI_API_KEY
-        if not key:
-            raise ValueError("未提供 GEMINI_API_KEY")
-        self._genai = genai.Client(api_key=key)
-        self._retriever = SemanticRetriever(supabase_client, api_key=key)
+        from config import get_genai_client
+        self._genai = get_genai_client(api_key)
+        self._retriever = SemanticRetriever(supabase_client, api_key=api_key)
         self._supabase = supabase_client
 
     def _log_usage(
