@@ -144,8 +144,6 @@ async def lifespan(app: FastAPI):
     """啟動時檢查必要設定。"""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 未設定")
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY 未設定")
     yield
 
 
