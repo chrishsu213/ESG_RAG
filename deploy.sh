@@ -8,7 +8,8 @@
 # 前提：
 #   - 已安裝 gcloud CLI 並登入 (gcloud auth login)
 #   - 已建立 GCP 專案
-#   - Secret Manager 中已有：SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY、GEMINI_API_KEY
+#   - Secret Manager 中已有：SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY、RAG_API_KEY
+#   - Vertex AI API 已啟用，Cloud Run service account 已有 roles/aiplatform.user
 
 set -e
 
@@ -48,7 +49,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --min-instances 0 \
     --max-instances 3 \
     --set-env-vars "ENV=production" \
-    --set-secrets "SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+    --set-secrets "SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,RAG_API_KEY=RAG_API_KEY:latest" \
     --quiet
 
 # 取得服務 URL

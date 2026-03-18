@@ -5,9 +5,13 @@ config.py — 讀取環境變數與全域常數
   1. Streamlit Cloud secrets (st.secrets) — 透過 _get_secret() 即時讀取
   2. 環境變數 / .env 檔案
 
-注意：SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY、GEMINI_API_KEY 使用
+注意：SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY 使用
      延遲載入（lazy-loading），確保在 Streamlit Cloud 上
      st.secrets 於首次存取時已經就緒。
+
+Vertex AI 認證：Cloud Run 使用 ADC（compute service account），
+     Streamlit Cloud 使用 GCP_SERVICE_ACCOUNT secrets，
+     本機開發需 gcloud auth application-default login。
 """
 import os
 from dotenv import load_dotenv

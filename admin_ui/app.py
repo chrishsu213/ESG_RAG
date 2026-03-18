@@ -744,118 +744,117 @@ elif page == "📤 上傳與匯入":
         st.markdown("**🎙️ 上傳錄音檔 → Gemini 轉錄 → 審校 → 入庫**")
         st.caption(f"支援格式：{', '.join(AudioParser.get_supported_formats())}")
         
-        if True:
-            audio_file = st.file_uploader(
-                "上傳錄音檔",
-                type=[ext.lstrip('.') for ext in AudioParser.get_supported_formats()],
-                key="audio_upload"
+        audio_file = st.file_uploader(
+            "上傳錄音檔",
+            type=[ext.lstrip('.') for ext in AudioParser.get_supported_formats()],
+            key="audio_upload"
+        )
+        
+        a_col1, a_col2 = st.columns(2)
+        audio_category = a_col1.selectbox("分類", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index("會議紀錄") if "會議紀錄" in CATEGORY_OPTIONS else 0, key="audio_cat")
+        audio_name = a_col2.text_input("文件名稱（選填，自動以檔名命名）", key="audio_name")
+        
+        if audio_file and st.button("🎤 開始轉錄", type="primary", key="start_transcribe"):
+            import tempfile
+            # 儲存暫存檔
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as tmp:
+                tmp.write(audio_file.read())
+                tmp_path = tmp.name
+            
+            progress_placeholder = st.empty()
+            
+            def on_progress(msg):
+                progress_placeholder.info(msg)
+            
+            try:
+                # 載入專有名詞字典
+                terms_dict = {}
+                try:
+                    terms_res = client.table("terms_dictionary").select("term, full_name").execute()
+                    terms_dict = {t["term"]: t["full_name"] for t in (terms_res.data or [])}
+                except Exception:
+                    pass  # 字典表可能尚未建立
+                
+                parser = AudioParser(on_progress=on_progress)
+                result = parser.parse(tmp_path, terms_dict=terms_dict)
+                
+                progress_placeholder.success("轉錄完成！")
+                
+                if result["terms_applied"]:
+                    st.info(f"已自動替換 {len(result['terms_applied'])} 個專有名詞：{', '.join(result['terms_applied'])}")
+                
+                # 儲存到 session state 供編輯
+                st.session_state["audio_transcript"] = result["corrected_transcript"]
+                st.session_state["audio_file_name"] = audio_file.name
+            
+            except Exception as e:
+                progress_placeholder.error(f"轉錄失敗：{e}")
+            finally:
+                os.unlink(tmp_path)
+        
+        # ── 草稿編輯區 ──────────────────────
+        if "audio_transcript" in st.session_state:
+            st.divider()
+            st.markdown("#### ✏️ 草稿審校")
+            st.caption("請檢查並修正講者名稱、專有名詞、聽不清楚的段落")
+            
+            edited_transcript = st.text_area(
+                "轉錄內容（可直接編輯）",
+                value=st.session_state["audio_transcript"],
+                height=400,
+                key="audio_editor"
             )
             
-            a_col1, a_col2 = st.columns(2)
-            audio_category = a_col1.selectbox("分類", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index("會議紀錄") if "會議紀錄" in CATEGORY_OPTIONS else 0, key="audio_cat")
-            audio_name = a_col2.text_input("文件名稱（選填，自動以檔名命名）", key="audio_name")
+            ac1, ac2, ac3 = st.columns(3)
             
-            if audio_file and st.button("🎤 開始轉錄", type="primary", key="start_transcribe"):
-                import tempfile
-                # 儲存暫存檔
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as tmp:
-                    tmp.write(audio_file.read())
-                    tmp_path = tmp.name
-                
-                progress_placeholder = st.empty()
-                
-                def on_progress(msg):
-                    progress_placeholder.info(msg)
-                
-                try:
-                    # 載入專有名詞字典
-                    terms_dict = {}
-                    try:
-                        terms_res = client.table("terms_dictionary").select("term, full_name").execute()
-                        terms_dict = {t["term"]: t["full_name"] for t in (terms_res.data or [])}
-                    except Exception:
-                        pass  # 字典表可能尚未建立
-                    
-                    parser = AudioParser(on_progress=on_progress)
-                    result = parser.parse(tmp_path, terms_dict=terms_dict)
-                    
-                    progress_placeholder.success("轉錄完成！")
-                    
-                    if result["terms_applied"]:
-                        st.info(f"已自動替換 {len(result['terms_applied'])} 個專有名詞：{', '.join(result['terms_applied'])}")
-                    
-                    # 儲存到 session state 供編輯
-                    st.session_state["audio_transcript"] = result["corrected_transcript"]
-                    st.session_state["audio_file_name"] = audio_file.name
-                
-                except Exception as e:
-                    progress_placeholder.error(f"轉錄失敗：{e}")
-                finally:
-                    os.unlink(tmp_path)
-            
-            # ── 草稿編輯區 ──────────────────────
-            if "audio_transcript" in st.session_state:
-                st.divider()
-                st.markdown("#### ✏️ 草稿審校")
-                st.caption("請檢查並修正講者名稱、專有名詞、聽不清楚的段落")
-                
-                edited_transcript = st.text_area(
-                    "轉錄內容（可直接編輯）",
-                    value=st.session_state["audio_transcript"],
-                    height=400,
-                    key="audio_editor"
-                )
-                
-                ac1, ac2, ac3 = st.columns(3)
-                
-                with ac1:
-                    if st.button("📥 確認入庫", type="primary", key="audio_save"):
-                        if edited_transcript.strip():
-                            # 清洗 → Chunk → Embed → 入庫
-                            cleaned = MarkdownCleaner().clean(edited_transcript)
-                            chunks = SemanticChunker().chunk(cleaned)
+            with ac1:
+                if st.button("📥 確認入庫", type="primary", key="audio_save"):
+                    if edited_transcript.strip():
+                        # 清洗 → Chunk → Embed → 入庫
+                        cleaned = MarkdownCleaner().clean(edited_transcript)
+                        chunks = SemanticChunker().chunk(cleaned)
+                        
+                        if chunks:
+                            embeddings = None
+                            embedder = GeminiEmbedder()
+                            texts = [c["text_content"] for c in chunks]
+                            embeddings = embedder.embed_batch(texts)
                             
-                            if chunks:
-                                embeddings = None
-                                if chunks:
-                                    embedder = GeminiEmbedder()
-                                    texts = [c["text_content"] for c in chunks]
-                                    embeddings = embedder.embed_batch(texts)
-                                
-                                exporter = SupabaseExporter(client)
-                                fname = st.session_state.get("audio_file_name", "audio_recording")
-                                final_name = audio_name.strip() if audio_name.strip() else fname
-                                
-                                import hashlib
-                                file_hash = hashlib.sha256(edited_transcript.encode()).hexdigest()
-                                doc_id = exporter.insert_document(
-                                    fname, file_hash, "audio",
-                                    category=audio_category,
-                                    display_name=final_name,
-                                )
-                                exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
-                                st.success(f"✅ 已入庫：{final_name}（{len(chunks)} 段）")
-                                del st.session_state["audio_transcript"]
-                                del st.session_state["audio_file_name"]
-                            else:
-                                st.warning("清洗後無有效內容")
+                            exporter = SupabaseExporter(client)
+                            fname = st.session_state.get("audio_file_name", "audio_recording")
+                            final_name = audio_name.strip() if audio_name.strip() else fname
+                            
+                            import hashlib
+                            file_hash = hashlib.sha256(edited_transcript.encode()).hexdigest()
+                            doc_id = exporter.insert_document(
+                                fname, file_hash, "audio",
+                                category=audio_category,
+                                display_name=final_name,
+                            )
+                            exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+                            st.success(f"✅ 已入庫：{final_name}（{len(chunks)} 段）")
+                            del st.session_state["audio_transcript"]
+                            del st.session_state["audio_file_name"]
                         else:
-                            st.warning("轉錄內容為空")
-                
-                with ac2:
-                    st.download_button(
-                        "💾 下載 Markdown",
-                        data=edited_transcript,
-                        file_name=f"{st.session_state.get('audio_file_name', 'transcript')}.md",
-                        mime="text/markdown",
-                        key="audio_download"
-                    )
-                
-                with ac3:
-                    if st.button("🗑️ 捨棄草稿", key="audio_discard"):
-                        del st.session_state["audio_transcript"]
-                        del st.session_state["audio_file_name"]
-                        st.rerun()
+                            st.warning("清洗後無有效內容")
+                    else:
+                        st.warning("轉錄內容為空")
+            
+            with ac2:
+                st.download_button(
+                    "💾 下載 Markdown",
+                    data=edited_transcript,
+                    file_name=f"{st.session_state.get('audio_file_name', 'transcript')}.md",
+                    mime="text/markdown",
+                    key="audio_download"
+                )
+            
+            with ac3:
+                if st.button("🗑️ 捨棄草稿", key="audio_discard"):
+                    del st.session_state["audio_transcript"]
+                    del st.session_state["audio_file_name"]
+                    st.rerun()
+
 
 # ══════════════════════════════════════════════════════
 # 頁面：文件管理（inline 編輯 + 分類群組）
