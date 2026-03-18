@@ -5,10 +5,13 @@ modules/retriever.py — 語義搜尋 / 混合搜尋 / Re-ranking 模組
 from __future__ import annotations
 
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Optional
+
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from google import genai
 from google.genai import types
@@ -50,8 +53,9 @@ class SemanticRetriever:
         self._model = EMBEDDING_MODEL
 
     @traceable(name="embed_query")
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5), reraise=True)
     def _embed_query(self, query: str) -> list[float]:
-        """將查詢文字轉為向量。"""
+        """將查詢文字轉為向量（帶重試，防止並行 Rate Limit）。"""
         result = self._genai.models.embed_content(
             model=self._model,
             contents=[query],
@@ -130,19 +134,25 @@ class SemanticRetriever:
                 params["filter_fiscal_year"] = fiscal_year
             return self._client.rpc("match_chunks_hybrid", params).execute().data or []
 
+        logger = logging.getLogger(__name__)
         try:
             # 平行發射多個檢索請求
             with ThreadPoolExecutor(max_workers=len(queries)) as executor:
-                futures = [executor.submit(_fetch_single, q) for q in queries]
-                for future in as_completed(futures):
-                    for r in future.result():
-                        rid = r.get("id")
-                        if rid and rid not in seen_ids:
-                            seen_ids.add(rid)
-                            all_results.append(r)
+                future_to_q = {executor.submit(_fetch_single, q): q for q in queries}
+                for future in as_completed(future_to_q):
+                    try:
+                        for r in future.result():
+                            rid = r.get("id")
+                            if rid and rid not in seen_ids:
+                                seen_ids.add(rid)
+                                all_results.append(r)
+                    except Exception as e:
+                        # 錯誤隔離：單一子查詢失敗不影響其他結果
+                        failed_q = future_to_q[future]
+                        logger.warning(f"[RETRIEVER] 子查詢 '{failed_q}' 檢索失敗，略過：{e}")
         except Exception as e:
             if "match_chunks_hybrid" in str(e):
-                print("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
+                logger.info("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
                 return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
             raise
 

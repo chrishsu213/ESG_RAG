@@ -384,21 +384,20 @@ class RagChat:
             output_tokens = 0
 
             try:
-                # 使用真串流 API，不需要人工 sleep
-                response = self._genai.models.generate_content(
+                # 使用真串流 API（google-genai SDK >= 1.0 的正確方法）
+                response = self._genai.models.generate_content_stream(
                     model=_model,
                     contents=messages,
                     config=types.GenerateContentConfig(
                         temperature=0.1,
                         response_modalities=["TEXT"],
                     ),
-                    stream=True,
                 )
 
                 for chunk in response:
                     if hasattr(chunk, "text") and chunk.text:
                         collected_text.append(chunk.text)
-                        yield chunk.text  # 直接 yield，Streamlit 內建平滑動畫
+                        yield chunk.text  # 真正的毫秒級串流
 
                     # 攔截最後一個 chunk 夾帶的官方精確 Token 數據
                     if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
@@ -406,22 +405,29 @@ class RagChat:
                         input_tokens = getattr(um, "prompt_token_count", 0) or 0
                         output_tokens = getattr(um, "candidates_token_count", 0) or 0
 
-            except (AttributeError, TypeError):
-                # Fallback: 同步生成
-                response = self._genai.models.generate_content(
-                    model=_model,
-                    contents=messages,
-                    config=types.GenerateContentConfig(temperature=0.1),
-                )
-                text = response.text.strip()
-                collected_text.append(text)
+            except Exception as stream_err:
+                # Fallback: 串流不可用時退回同步生成
+                logger.warning(f"[RAG] 串流失敗，退回同步生成：{type(stream_err).__name__}")
+                try:
+                    response = self._genai.models.generate_content(
+                        model=_model,
+                        contents=messages,
+                        config=types.GenerateContentConfig(temperature=0.1),
+                    )
+                    text = response.text.strip()
+                    collected_text.append(text)
 
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    um = response.usage_metadata
-                    input_tokens = getattr(um, "prompt_token_count", 0) or 0
-                    output_tokens = getattr(um, "candidates_token_count", 0) or 0
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        um = response.usage_metadata
+                        input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(um, "candidates_token_count", 0) or 0
 
-                yield text
+                    yield text
+                except Exception as sync_err:
+                    error_msg = f"\n\n[系統提示：生成過程發生異常 ({type(sync_err).__name__})]"
+                    collected_text.append(error_msg)
+                    logger.error(f"[RAG] 同步生成也失敗：{sync_err}")
+                    yield error_msg
 
             finally:
                 # generator 消耗完畢後自動寫入 Log
