@@ -383,6 +383,7 @@ class RagChat:
         _sm = search_mode
         _fy = fiscal_year
 
+        @traceable(name="rag_token_stream", run_type="llm")
         def token_stream():
             collected_text = []
             input_tokens = 0
@@ -647,6 +648,7 @@ class RagChat:
         _model = self._CHAT_MODEL
         _sm = search_mode
 
+        @traceable(name="rag_compare_token_stream", run_type="llm")
         def token_stream():
             collected_text = []
             input_tokens = 0
