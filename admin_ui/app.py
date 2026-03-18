@@ -1236,16 +1236,31 @@ elif page == "💬 AI 問答":
             _compare_groups = []
             
             if len(chat_groups) >= 2:
-                # 多集團比較
+                # 多集團比較：繼承子公司與年度條件
                 _is_compare = True
-                _compare_groups = [{"group": g} for g in chat_groups]
+                _compare_groups = [
+                    {"group": g, "company": _selected_company, "fiscal_year": _selected_fiscal_year}
+                    for g in chat_groups
+                ]
             else:
                 # Regex 偵測比較意圖
-                _known = _all_companies if '_all_companies' in dir() else []
+                _known = _all_companies
                 _detect = rag.detect_comparison(prompt, _known)
-                if _detect and _detect.get("dimension") == "company" and len(_detect.get("values", [])) >= 2:
-                    _is_compare = True
-                    _compare_groups = [{"company": v} for v in _detect["values"]]
+                if _detect:
+                    dim = _detect.get("dimension")
+                    vals = _detect.get("values", [])
+                    if dim == "company" and len(vals) >= 2:
+                        _is_compare = True
+                        _compare_groups = [
+                            {"company": v, "group": _selected_group, "fiscal_year": _selected_fiscal_year}
+                            for v in vals
+                        ]
+                    elif dim == "fiscal_year" and len(vals) >= 2:
+                        _is_compare = True
+                        _compare_groups = [
+                            {"fiscal_year": v, "group": _selected_group, "company": _selected_company}
+                            for v in vals
+                        ]
             
             if _is_compare:
                 with st.spinner("比較搜尋中..."):

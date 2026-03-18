@@ -36,7 +36,7 @@ FILES = [
 with open(OUTPUT, "w", encoding="utf-8") as out:
     out.write("=" * 80 + "\n")
     out.write("TCC RAG 知識庫 — 完整程式碼打包\n")
-    out.write(f"產生時間：2026-03-17\n")
+    out.write(f"產生時間：2026-03-18\n")
     out.write("=" * 80 + "\n\n")
 
     for fp in FILES:

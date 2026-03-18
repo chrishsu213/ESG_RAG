@@ -157,8 +157,8 @@ app = FastAPI(
 # CORS（允許 IR 平台等前端呼叫）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 正式環境應限制為特定 domain
-    allow_credentials=True,
+    allow_origins=["*"],  # 正式環境應限制為具體 domain
+    allow_credentials=False,  # 不可與 allow_origins=["*"] 同時為 True (CORS 規範)
     allow_methods=["*"],
     allow_headers=["*"],
 )

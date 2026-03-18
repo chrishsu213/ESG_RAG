@@ -491,8 +491,13 @@ class RagChat:
             若偵測到比較意圖，回傳 {"dimension": "company"|"fiscal_year", "values": [...]}
             否則回傳 None。
         """
-        # 偵測問題中提到的公司名
-        mentioned = [c for c in known_companies if c in question]
+        # 偵測問題中提到的公司名（由長到短比對，避免短詞包含進長詞）
+        mentioned = []
+        temp_q = question
+        for c in sorted(known_companies, key=len, reverse=True):
+            if c in temp_q:
+                mentioned.append(c)
+                temp_q = temp_q.replace(c, "")  # 移除已比對部分，防止重複觸發
 
         # 偵測多年份
         years = re.findall(r"20\d{2}", question)
@@ -699,8 +704,21 @@ class RagChat:
                         yield error_msg
             finally:
                 try:
+                    full_text = "".join(collected_text)
+
+                    # 如果 API 沒回傳 input_tokens，啟用估算機制
                     if input_tokens == 0:
-                        output_tokens = max(1, len("".join(collected_text)) // 2)
+                        try:
+                            cr = self._genai.models.count_tokens(
+                                model=_model, contents=messages,
+                            )
+                            input_tokens = cr.total_tokens
+                        except Exception:
+                            input_tokens = len(str(messages)) // 3
+
+                    if output_tokens == 0:
+                        output_tokens = max(1, len(full_text) // 2)
+
                     self._log_usage(
                         source=_src, question=_q, model=_model,
                         input_tokens=input_tokens, output_tokens=output_tokens,
