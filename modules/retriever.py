@@ -17,7 +17,7 @@ from google import genai
 from google.genai import types
 from supabase import Client
 
-from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION
+from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
 
 try:
     from langsmith import traceable

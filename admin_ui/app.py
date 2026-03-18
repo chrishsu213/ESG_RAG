@@ -102,7 +102,6 @@ def init_supabase():
     return create_client(url, key)
 
 client = init_supabase()
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
 
 # ── 通用函式 ──────────────────────────────────────────
 def fetch_system_stats():
@@ -155,8 +154,8 @@ def process_url(url: str, category: str, display_name: str, report_group: str = 
         return False, "無有效內容"
     
     embeddings = None
-    if GEMINI_API_KEY:
-        embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+    if chunks:
+        embedder = GeminiEmbedder()
         texts = [c["text_content"] for c in chunks]
         embeddings = embedder.embed_batch(texts)
     
@@ -185,8 +184,7 @@ def process_url(url: str, category: str, display_name: str, report_group: str = 
 # ── 側邊欄導覽 ────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ RAG 管理中心")
-    if not GEMINI_API_KEY:
-        st.warning("⚠️ 未設定 GEMINI_API_KEY")
+
         
     page = st.radio(
         "選擇功能",
@@ -205,7 +203,7 @@ if page == "📊 系統概況":
     c1, c2, c3 = st.columns(3)
     c1.metric("總文件數", f"{doc_count} 份")
     c2.metric("知識庫段落 (Chunks)", f"{chunk_count} 段")
-    c3.metric("向量模型", "Gemini 768d" if GEMINI_API_KEY else "未啟用")
+    c3.metric("向量模型", "Gemini 768d")
     
     st.divider()
     st.markdown("""
@@ -349,7 +347,7 @@ elif page == "📤 上傳與匯入":
                         pct = int((current / total) * 100)
                         parse_progress.progress(pct, text=f"[{mode}] 第 {current}/{total} 頁")
                     
-                    parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress, api_key=GEMINI_API_KEY)
+                    parser = VisionPdfParser(mode=pdf_mode, on_progress=on_pdf_progress)
                     raw_md = parser.parse(temp_path)
                     
                     stats = parser.stats
@@ -380,7 +378,7 @@ elif page == "📤 上傳與匯入":
                 with col_ai:
                     if st.button("🤖 AI 自動校對", key="ai_proofread"):
                         with st.spinner("正在 AI 校對中，請稍候..."):
-                            proofreader = AiProofreader(api_key=GEMINI_API_KEY)
+                            proofreader = AiProofreader()
                             st.session_state["draft_md"] = proofreader.proofread(st.session_state["draft_md"])
                             st.toast("✅ AI 校對完成！")
                             st.rerun()
@@ -424,9 +422,9 @@ elif page == "📤 上傳與匯入":
                                     meta["page_end"] += offset
                         
                         embeddings = None
-                        if GEMINI_API_KEY and chunks:
+                        if chunks:
                             progress.progress(50, text=f"向量嵌入中 ({len(chunks)} 段)...")
-                            embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+                            embedder = GeminiEmbedder()
                             texts = [c["text_content"] for c in chunks]
                             try:
                                 embeddings = embedder.embed_batch(texts)
@@ -524,7 +522,7 @@ elif page == "📤 上傳與匯入":
                         
                         # 3) 解析
                         if safe_ext == ".pdf":
-                            parser = VisionPdfParser(mode=batch_pdf_mode, api_key=GEMINI_API_KEY)
+                            parser = VisionPdfParser(mode=batch_pdf_mode)
                             raw_md = parser.parse(temp_path)
                         else:
                             raw_md = DocxParser().parse(temp_path)
@@ -540,8 +538,8 @@ elif page == "📤 上傳與匯入":
                         
                         # 5) 嵌入
                         embeddings = None
-                        if GEMINI_API_KEY:
-                            embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+                        if chunks:
+                            embedder = GeminiEmbedder()
                             texts = [c["text_content"] for c in chunks]
                             embeddings = embedder.embed_batch(texts)
                         
@@ -746,9 +744,7 @@ elif page == "📤 上傳與匯入":
         st.markdown("**🎙️ 上傳錄音檔 → Gemini 轉錄 → 審校 → 入庫**")
         st.caption(f"支援格式：{', '.join(AudioParser.get_supported_formats())}")
         
-        if not GEMINI_API_KEY:
-            st.error("此功能需要 GEMINI_API_KEY。")
-        else:
+        if True:
             audio_file = st.file_uploader(
                 "上傳錄音檔",
                 type=[ext.lstrip('.') for ext in AudioParser.get_supported_formats()],
@@ -780,7 +776,7 @@ elif page == "📤 上傳與匯入":
                     except Exception:
                         pass  # 字典表可能尚未建立
                     
-                    parser = AudioParser(api_key=GEMINI_API_KEY, on_progress=on_progress)
+                    parser = AudioParser(on_progress=on_progress)
                     result = parser.parse(tmp_path, terms_dict=terms_dict)
                     
                     progress_placeholder.success("轉錄完成！")
@@ -821,8 +817,8 @@ elif page == "📤 上傳與匯入":
                             
                             if chunks:
                                 embeddings = None
-                                if GEMINI_API_KEY:
-                                    embedder = GeminiEmbedder(api_key=GEMINI_API_KEY)
+                                if chunks:
+                                    embedder = GeminiEmbedder()
                                     texts = [c["text_content"] for c in chunks]
                                     embeddings = embedder.embed_batch(texts)
                                 
@@ -1020,9 +1016,7 @@ elif page == "🗃️ 文件管理":
 elif page == "🔍 檢索測試":
     st.title("🔍 檢索測試 (Semantic Search)")
     
-    if not GEMINI_API_KEY:
-        st.error("此功能需要 GEMINI_API_KEY。")
-        st.stop()
+
     
     with st.form("search_form"):
         query = st.text_input("輸入查詢問題", placeholder="例如：公司碳排放目標是什麼？")
@@ -1035,7 +1029,7 @@ elif page == "🔍 檢索測試":
 
     if submitted and query:
         with st.spinner("搜尋中..."):
-            retriever = SemanticRetriever(client, api_key=GEMINI_API_KEY)
+            retriever = SemanticRetriever(client)
             results = retriever.search(query, top_k=top_k, threshold=threshold)
             
         if not results:
@@ -1100,9 +1094,7 @@ elif page == "🔍 檢索測試":
 elif page == "💬 AI 問答":
     st.title("💬 AI 問答 (RAG Chatbot)")
     
-    if not GEMINI_API_KEY:
-        st.error("此功能需要 GEMINI_API_KEY。")
-        st.stop()
+
     
     # ── 側邊欄搜尋設定 ────────────────────────────
     with st.sidebar:
@@ -1220,7 +1212,7 @@ elif page == "💬 AI 問答":
         
         # 生成 AI 回答
         with st.chat_message("assistant"):
-            rag = RagChat(client, api_key=GEMINI_API_KEY)
+            rag = RagChat(client)
             
             # 傳入歷史對話（不含來源資訊）
             history_for_rag = [

@@ -10,7 +10,8 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY
+
+
 
 
 class AiProofreader:

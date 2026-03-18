@@ -17,7 +17,8 @@ from typing import Callable, Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY  # 保留：app.py 仍從外部傳入
+
+
 
 
 class AudioParser:

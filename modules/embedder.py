@@ -12,7 +12,7 @@ from google import genai
 from google.genai import types
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-from config import GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSION
+from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
 
 logger = logging.getLogger(__name__)
 

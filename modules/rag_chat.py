@@ -13,7 +13,7 @@ from google.genai import types
 from supabase import Client
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-from config import GEMINI_API_KEY, DEFAULT_GROUP, COMPARE_KEYWORDS
+from config import DEFAULT_GROUP, COMPARE_KEYWORDS
 from modules.retriever import SemanticRetriever
 
 try:
