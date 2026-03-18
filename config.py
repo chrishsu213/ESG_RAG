@@ -138,34 +138,25 @@ def _setup_streamlit_adc() -> bool:
 
 
 def get_genai_client(api_key: str | None = None):
-    """建立 genai.Client，優先 Vertex AI，fallback 到 API Key。
+    """建立 genai.Client，使用 Vertex AI（ADC 認證）。
 
-    優先順序：
-    1. Vertex AI（Cloud Run ADC / Streamlit service account）
-    2. 傳入的 api_key
-    3. GEMINI_API_KEY 環境變數
+    Cloud Run：自動使用 compute service account。
+    Streamlit Cloud：從 secrets 讀取 service account JSON。
+    本機開發：需先執行 gcloud auth application-default login。
     """
     from google import genai as _genai
 
-    # 嘗試 Vertex AI
+    _setup_streamlit_adc()
     try:
-        _setup_streamlit_adc()
         client = _genai.Client(
             vertexai=True,
             project=GCP_PROJECT,
             location=GCP_LOCATION,
         )
-        # 快速驗證連線（list models 是輕量操作）
-        _ = client.models.list(config={"page_size": 1})
         return client
-    except Exception:
-        pass
-
-    # Fallback: API Key
-    key = api_key or _get_secret("GEMINI_API_KEY")
-    if key:
-        return _genai.Client(api_key=key)
-
-    raise ValueError(
-        "無法建立 Gemini 連線：Vertex AI ADC 不可用，且未提供 GEMINI_API_KEY"
-    )
+    except Exception as e:
+        raise ValueError(
+            f"無法建立 Vertex AI 連線：{e}\n"
+            "請確認：(1) 已啟用 Vertex AI API "
+            "(2) ADC 已設定（gcloud auth application-default login）"
+        ) from e
