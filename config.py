@@ -119,7 +119,7 @@ COMPARE_KEYWORDS: list[str] = [
 
 # ── Vertex AI / Gemini 設定 ────────────────────────────
 GCP_PROJECT: str = _get_secret("GCP_PROJECT", "tcc-personal-project")
-GCP_LOCATION: str = _get_secret("GCP_LOCATION", "asia-east1")
+GCP_LOCATION: str = _get_secret("GCP_LOCATION", "us-central1")  # Gemini 2.5 系列目前不支援 asia-east1
 
 
 def _setup_streamlit_adc() -> bool:
