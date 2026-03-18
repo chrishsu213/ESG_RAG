@@ -78,6 +78,8 @@ class SemanticRetriever:
     ) -> list[dict[str, Any]]:
         """純向量語義搜尋（使用 match_chunks RPC）。"""
         query_embedding = self._embed_query(query)
+        # 確保 embedding 是純 list[float]（防止 numpy/proto 型別問題）
+        query_embedding = [float(v) for v in query_embedding]
         params = {
             "query_embedding": query_embedding,
             "match_count": top_k,
@@ -91,7 +93,11 @@ class SemanticRetriever:
             params["filter_group"] = group
         if company:
             params["filter_company"] = company
-        result = self._client.rpc("match_chunks", params).execute()
+        try:
+            result = self._client.rpc("match_chunks", params).execute()
+        except Exception as e:
+            logger.error(f"[Retriever] match_chunks RPC 失敗：{type(e).__name__}: {e}")
+            raise
         return self._apply_time_weight(result.data or [])
 
     # ── 混合搜尋 ───────────────────────────────────────
@@ -120,6 +126,7 @@ class SemanticRetriever:
         def _fetch_single(q: str) -> list[dict]:
             """單一查詢的檢索遏輯（用於平行執行）。"""
             q_embedding = self._embed_query(q)
+            q_embedding = [float(v) for v in q_embedding]
             params = {
                 "query_embedding": q_embedding,
                 "query_text": q,
@@ -134,7 +141,11 @@ class SemanticRetriever:
                 params["filter_group"] = group
             if company:
                 params["filter_company"] = company
-            return self._client.rpc("match_chunks_hybrid", params).execute().data or []
+            try:
+                return self._client.rpc("match_chunks_hybrid", params).execute().data or []
+            except Exception as e:
+                logger.error(f"[Retriever] match_chunks_hybrid RPC 失敗：{type(e).__name__}: {e}")
+                raise
 
         logger = logging.getLogger(__name__)
         try:

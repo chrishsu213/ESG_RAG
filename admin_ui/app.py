@@ -1029,7 +1029,11 @@ elif page == "🔍 檢索測試":
     if submitted and query:
         with st.spinner("搜尋中..."):
             retriever = SemanticRetriever(client)
-            results = retriever.search(query, top_k=top_k, threshold=threshold)
+            try:
+                results = retriever.search(query, top_k=top_k, threshold=threshold)
+            except Exception as e:
+                st.error(f"搜尋失敗：{type(e).__name__}: {e}")
+                results = []
             
         if not results:
             st.warning("找不到符合門檻的結果，請降低 Threshold。")
