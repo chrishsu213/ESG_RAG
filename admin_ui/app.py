@@ -1142,16 +1142,29 @@ elif page == "💬 AI 問答":
             
             chat_company_all = st.checkbox("全部子公司", value=True, key="chat_company_all")
             if chat_company_all:
-                chat_companies = st.multiselect("🏭 子公司", _grp_companies, default=_grp_companies, disabled=True, key="chat_companies")
+                _selected_company = None
             else:
-                chat_companies = st.multiselect("🏭 子公司", _grp_companies, key="chat_companies")
+                _sel = st.selectbox(
+                    "🏭 子公司",
+                    options=["（請選擇）"] + _grp_companies,
+                    key="chat_company_sel",
+                    help="目前搜尋 RPC 只支援單一子公司篩選",
+                )
+                _selected_company = _sel if _sel != "（請選擇）" else None
+
             
-            # 年度（checkbox 全部 + 多選鎖定）
+            # 年度（全部 checkbox + 單選下拉）
             chat_year_all = st.checkbox("全部年度", value=True, key="chat_year_all")
             if chat_year_all:
-                chat_years = st.multiselect("📅 年度", _all_years, default=_all_years, disabled=True, key="chat_years")
+                _selected_fiscal_year = None
             else:
-                chat_years = st.multiselect("📅 年度", _all_years, key="chat_years")
+                _sel_yr = st.selectbox(
+                    "📅 年度",
+                    options=["（請選擇）"] + list(_all_years),
+                    key="chat_year_sel",
+                    help="目前小比對 RPC 只支援單一年度筛選"
+                )
+                _selected_fiscal_year = _sel_yr if _sel_yr != "（請選擇）" else None
             
             # 報告類別（checkbox 全部 + 多選鎖定）
             chat_cat_all = st.checkbox("全部類別", value=True, key="chat_cat_all")
@@ -1166,12 +1179,11 @@ elif page == "💬 AI 問答":
     
     # ── 解析篩選條件 ──────────────────────────────
     _selected_group = chat_groups[0] if len(chat_groups) == 1 else None
-    _selected_company = None
-    if not chat_company_all and len(chat_companies) == 1:
-        _selected_company = chat_companies[0]
-    _selected_fiscal_year = None
-    if not chat_year_all and len(chat_years) == 1:
-        _selected_fiscal_year = chat_years[0]
+    # _selected_company / _selected_fiscal_year 已在 expander 內直接解析
+    if chat_company_all:
+        _selected_company = None
+    if chat_year_all:
+        _selected_fiscal_year = None
     
     # ── 初始化對話歷史 ────────────────────────────
     if "chat_history" not in st.session_state:

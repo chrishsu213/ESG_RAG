@@ -669,11 +669,34 @@ class RagChat:
                         um = chunk.usage_metadata
                         input_tokens = getattr(um, "prompt_token_count", 0) or 0
                         output_tokens = getattr(um, "candidates_token_count", 0) or 0
-            except Exception as e:
-                error_msg = f"\n\n[系統提示：比較分析發生異常 ({type(e).__name__})]"
-                collected_text.append(error_msg)
-                logger.error(f"[RAG] 比較串流失敗：{e}")
-                yield error_msg
+            except Exception as stream_err:
+                if collected_text:
+                    # 已經吐過字 → 中途斷線，追加提示，不重做
+                    error_msg = f"\n\n[系統提示：比較分析連線中斷 ({type(stream_err).__name__})]"
+                    collected_text.append(error_msg)
+                    logger.error(f"[RAG] 比較串流中途失敗：{stream_err}")
+                    yield error_msg
+                else:
+                    # 完全沒吐字 → 退回同步生成
+                    logger.warning(f"[RAG] 比較串流啟動失敗，退回同步生成：{type(stream_err).__name__}")
+                    try:
+                        response = self._genai.models.generate_content(
+                            model=_model,
+                            contents=messages,
+                            config=types.GenerateContentConfig(temperature=0.1),
+                        )
+                        text = response.text.strip()
+                        collected_text.append(text)
+                        if hasattr(response, "usage_metadata") and response.usage_metadata:
+                            um = response.usage_metadata
+                            input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                            output_tokens = getattr(um, "candidates_token_count", 0) or 0
+                        yield text
+                    except Exception as sync_err:
+                        error_msg = f"\n\n[系統提示：比較分析發生異常 ({type(sync_err).__name__})]"
+                        collected_text.append(error_msg)
+                        logger.error(f"[RAG] 比較同步生成也失敗：{sync_err}")
+                        yield error_msg
             finally:
                 try:
                     if input_tokens == 0:
