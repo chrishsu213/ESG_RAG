@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 # 確保上層模組可 import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
+from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, DEFAULT_GROUP
 from supabase import create_client
 from modules.retriever import SemanticRetriever
 from modules.rag_chat import RagChat
@@ -76,6 +76,8 @@ class SearchRequest(BaseModel):
     use_hybrid: bool = Field(True, description="是否使用混合搜尋")
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'、'zh-TW'），Null 則不限")
     fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
+    group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
+    company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
 
 
 class AskRequest(BaseModel):
@@ -87,6 +89,8 @@ class AskRequest(BaseModel):
     )
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'），Null 則不限")
     fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
+    group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
+    company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
     history: Optional[list[dict]] = Field(
         None,
         description="對話歷史，格式 [{role: 'user'|'assistant', content: '...'}]"
@@ -112,6 +116,8 @@ class SearchResult(BaseModel):
     confidentiality: Optional[str] = None
     tags: Optional[list] = None
     publish_date: Optional[str] = None
+    group: Optional[str] = None
+    company: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -204,11 +210,13 @@ def search(req: SearchRequest, _=Depends(verify_api_key)):
             results = retriever.hybrid_search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
                 language=req.language, fiscal_year=req.fiscal_year,
+                group=req.group, company=req.company,
             )
         else:
             results = retriever.search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
                 language=req.language, fiscal_year=req.fiscal_year,
+                group=req.group, company=req.company,
             )
 
         items = []
@@ -232,6 +240,8 @@ def search(req: SearchRequest, _=Depends(verify_api_key)):
                 confidentiality=r.get("confidentiality"),
                 tags=r.get("tags"),
                 publish_date=str(r["publish_date"]) if r.get("publish_date") else None,
+                group=r.get("group"),
+                company=r.get("company"),
             ))
 
         return SearchResponse(results=items, count=len(items))
@@ -254,6 +264,8 @@ def ask(req: AskRequest, _=Depends(verify_api_key)):
             top_k=req.top_k,
             language=req.language,
             fiscal_year=req.fiscal_year,
+            group=req.group,
+            company=req.company,
             source="api",
         )
         return AskResponse(
@@ -289,6 +301,8 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
                 top_k=req.top_k,
                 language=req.language,
                 fiscal_year=req.fiscal_year,
+                group=req.group,
+                company=req.company,
                 source="api_stream",
             )
 

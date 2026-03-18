@@ -24,29 +24,11 @@ class SupabaseExporter:
         category: str = "其他",
         display_name: Optional[str] = None,
         report_group: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
     ) -> int:
         """
         寫入 documents 主表，回傳新建記錄的主鍵 id。
-
-        Parameters
-        ----------
-        file_name : str
-            檔案名稱（或 URL）。
-        file_hash : str
-            SHA-256 hash（或 URL hash）。
-        source_type : str
-            'pdf' | 'docx' | 'url'
-        category : str
-            文件分類：網站 | 報告書 | 政策 | 財務報告 | 其他
-        display_name : str | None
-            使用者自訂的顯示名稱，若為 None 則使用 file_name。
-        report_group : str | None
-            報告群組名稱，用於歸類同一份報告的多個章節。
-
-        Returns
-        -------
-        int
-            新建的 document id。
         """
         record = {
             "file_name": file_name,
@@ -57,6 +39,10 @@ class SupabaseExporter:
         }
         if report_group:
             record["report_group"] = report_group
+        if group:
+            record["group"] = group
+        if company:
+            record["company"] = company
         result = (
             self._client.table("documents")
             .insert(record)

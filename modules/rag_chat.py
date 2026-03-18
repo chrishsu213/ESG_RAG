@@ -4,6 +4,7 @@ modules/rag_chat.py — RAG 聊天核心模組
 """
 from __future__ import annotations
 
+import re
 import logging
 from typing import Any, Optional
 
@@ -12,7 +13,7 @@ from google.genai import types
 from supabase import Client
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, DEFAULT_GROUP, COMPARE_KEYWORDS
 from modules.retriever import SemanticRetriever
 
 try:
@@ -96,6 +97,8 @@ class RagChat:
         top_k: int = 5,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
         source: str = "api",
     ) -> dict[str, Any]:
         """
@@ -124,7 +127,7 @@ class RagChat:
             - search_results: list[dict] (原始搜尋結果)
         """
         # 1) 搜尋相關 chunks
-        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year)
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
 
         # 2) 如果啟用 re-ranking，精排結果
         if search_mode == "hybrid_rerank" and results:
@@ -269,6 +272,8 @@ class RagChat:
         top_k: int = 5,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
         source: str = "admin_ui",
     ) -> dict[str, Any]:
         """
@@ -278,7 +283,7 @@ class RagChat:
         - stream: Generator[str] (逐 token 產出答案文字)
         """
         # 1) 搜尋相關 chunks（同步完成）
-        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year)
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
 
         if search_mode == "hybrid_rerank" and results:
             results = self._retriever.rerank(question, results, top_k=top_k)
@@ -471,3 +476,219 @@ class RagChat:
             "search_results": results,
             "stream": token_stream(),
         }
+
+    # ── 比較意圖偵測 ─────────────────────────────────
+    def detect_comparison(
+        self,
+        question: str,
+        known_companies: list[str],
+    ) -> dict | None:
+        """
+        用 Regex 偵測問題中的比較意圖。
+
+        Returns
+        -------
+        dict | None
+            若偵測到比較意圖，回傳 {"dimension": "company"|"fiscal_year", "values": [...]}
+            否則回傳 None。
+        """
+        # 偵測問題中提到的公司名
+        mentioned = [c for c in known_companies if c in question]
+
+        # 偵測多年份
+        years = re.findall(r"20\d{2}", question)
+        # 民國年
+        roc_years = re.findall(r"(?:民國?\s*)?(\d{2,3})\s*年", question)
+        for ry in roc_years:
+            ry_int = int(ry)
+            if 100 <= ry_int <= 150:
+                western = str(ry_int + 1911)
+                if western not in years:
+                    years.append(western)
+
+        # 偵測比較關鍵字
+        has_compare_kw = any(kw in question for kw in COMPARE_KEYWORDS)
+
+        # 決策：多家公司 → 公司比較
+        if len(mentioned) >= 2:
+            return {"dimension": "company", "values": mentioned}
+        # 多年份 → 年度比較
+        if len(set(years)) >= 2:
+            return {"dimension": "fiscal_year", "values": list(set(years))}
+        # 一家公司 + 比較關鍵字 → 可能是同業比較，但無法確定對象
+        if len(mentioned) == 1 and has_compare_kw:
+            return {"dimension": "company", "values": mentioned}
+
+        return None
+
+    # ── 多輪比較搜尋 ─────────────────────────────────
+    @traceable(name="rag_ask_compare")
+    def ask_compare(
+        self,
+        question: str,
+        groups: list[dict],
+        history: list[dict[str, str]] | None = None,
+        search_mode: str = "hybrid",
+        top_k: int = 5,
+        language: Optional[str] = None,
+        source: str = "admin_ui",
+    ) -> dict[str, Any]:
+        """
+        多輪比較搜尋：每組篩選條件分別搜尋 Top K，合併後交叉比較。
+
+        Parameters
+        ----------
+        groups : list[dict]
+            每組篩選條件，如 [{"group": "台泥企業團"}, {"group": "亞泥"}]
+            或 [{"fiscal_year": "2023"}, {"fiscal_year": "2024"}]
+        """
+        all_results = []
+        all_sources = []
+        source_idx = 1
+
+        for grp in groups:
+            grp_label = " / ".join(str(v) for v in grp.values())
+            results = self._retriever.hybrid_search(
+                question,
+                top_k=top_k * 2,
+                language=language,
+                fiscal_year=grp.get("fiscal_year"),
+                group=grp.get("group"),
+                company=grp.get("company"),
+            )
+
+            if search_mode == "hybrid_rerank" and results:
+                results = self._retriever.rerank(question, results, top_k=top_k)
+            else:
+                results = results[:top_k]
+
+            for r in results:
+                r["_group_label"] = grp_label
+                meta = r.get("metadata") or {}
+                doc_name = r.get("display_name") or r.get("file_name", "未知文件")
+                all_sources.append({
+                    "index": source_idx,
+                    "document_name": doc_name,
+                    "file_name": r.get("file_name", ""),
+                    "section_title": meta.get("section_title", ""),
+                    "page_start": meta.get("page_start"),
+                    "page_end": meta.get("page_end"),
+                    "report_group": r.get("report_group", ""),
+                    "group": r.get("group", ""),
+                    "company": r.get("company", ""),
+                    "similarity": r.get("similarity", 0),
+                    "search_type": r.get("search_type", "vector"),
+                })
+                source_idx += 1
+
+            all_results.extend(results)
+
+        if not all_results:
+            def empty_stream():
+                yield "根據目前資料庫中的資料，無法找到與您問題相關的資訊。"
+            return {"sources": [], "search_results": [], "stream": empty_stream()}
+
+        # 組合 context（按分組標記）
+        context_parts = []
+        for i, r in enumerate(all_results, 1):
+            meta = r.get("metadata") or {}
+            doc_name = r.get("display_name") or r.get("file_name", "未知文件")
+            grp_label = r.get("_group_label", "")
+            page_info = ""
+            if meta.get("page_start"):
+                ps = meta["page_start"]
+                pe = meta.get("page_end")
+                page_info = f" （第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+
+            context_parts.append(
+                f"[來源{i}] 【{grp_label}】文件：{doc_name}{page_info}\n"
+                f"章節：{meta.get('section_title', '無')}\n"
+                f"內容：{r['text_content']}\n"
+            )
+
+        context = "\n---\n".join(context_parts)
+
+        # 組合比較型 prompt
+        compare_prompt = f"""你是一位嚴謹的 ESG 分析助理。以下資料來自不同的分組（公司/年度），請交叉比較後回答。
+
+規則：
+1. 用 Markdown 表格呈現比較結果
+2. 引用處標註 [來源N]
+3. 若某分組缺少特定資訊，在表格中標示「未揭露」
+4. 表格之後提供簡要分析摘要
+
+<context>
+{context}
+</context>
+
+使用者問題：
+<user_query>
+{question}
+</user_query>
+
+請根據 <context> 內的資料進行交叉比較分析，用表格和文字回答。"""
+
+        messages = [
+            types.Content(role="user", parts=[types.Part(text=compare_prompt)]),
+        ]
+
+        if history:
+            hist_messages = []
+            for msg in history[-4:]:
+                role = "model" if msg["role"] == "assistant" else "user"
+                hist_messages.append(
+                    types.Content(role=role, parts=[types.Part(text=msg["content"])])
+                )
+            messages = hist_messages + messages
+
+        # 串流生成
+        _src = source
+        _q = question
+        _model = self._CHAT_MODEL
+        _sm = search_mode
+
+        def token_stream():
+            collected_text = []
+            input_tokens = 0
+            output_tokens = 0
+
+            try:
+                response = self._genai.models.generate_content_stream(
+                    model=_model,
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_modalities=["TEXT"],
+                    ),
+                )
+                for chunk in response:
+                    if hasattr(chunk, "text") and chunk.text:
+                        collected_text.append(chunk.text)
+                        yield chunk.text
+                    if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                        um = chunk.usage_metadata
+                        input_tokens = getattr(um, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(um, "candidates_token_count", 0) or 0
+            except Exception as e:
+                error_msg = f"\n\n[系統提示：比較分析發生異常 ({type(e).__name__})]"
+                collected_text.append(error_msg)
+                logger.error(f"[RAG] 比較串流失敗：{e}")
+                yield error_msg
+            finally:
+                try:
+                    if input_tokens == 0:
+                        output_tokens = max(1, len("".join(collected_text)) // 2)
+                    self._log_usage(
+                        source=_src, question=_q, model=_model,
+                        input_tokens=input_tokens, output_tokens=output_tokens,
+                        search_mode=_sm, fiscal_year=None,
+                    )
+                except Exception:
+                    pass
+
+        return {
+            "sources": all_sources,
+            "search_results": all_results,
+            "stream": token_stream(),
+        }
+

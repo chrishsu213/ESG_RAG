@@ -103,3 +103,12 @@ HEADER_FOOTER_PATTERNS: list[str] = [
     r"^Page\s+\d+",                       # Page 1
     r"(?i)^(confidential|internal use)",  # 浮水印文字
 ]
+
+# ── 集團/同業篩選設定 ─────────────────────────────────
+DEFAULT_GROUP: str = "台泥企業團"
+
+COMPARE_KEYWORDS: list[str] = [
+    "比較", "差異", "差別", "不同", "對比", "相比",
+    "優於", "落後", "領先", "變化", "趨勢", "成長",
+    "vs", "VS", "勝過", "超越",
+]

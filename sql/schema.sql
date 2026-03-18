@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS documents (
     category        TEXT        DEFAULT '其他',          -- 網站 | 永續報告書 | 年度報告 | 財務報告 | 公司政策 | 會議紀錄 | 法說會 | 其他
     display_name    TEXT,                                -- 使用者自訂顯示名稱
     report_group    TEXT,                                -- 歸屬報告群組
+    -- 集團 / 子公司
+    "group"         TEXT,                                -- 集團（台泥企業團 | 亞泥 | 中鋼）
+    company         TEXT,                                -- 子公司（台泥 | 台泥儲能 | NHOA）
     -- Metadata
     language        TEXT        DEFAULT 'zh-TW',         -- zh-TW | en | ja | zh-CN
     publish_date    DATE,                                -- 文件發布日期
@@ -33,6 +36,8 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_report_group    ON documents (report_group);
+CREATE INDEX IF NOT EXISTS idx_documents_group           ON documents ("group");
+CREATE INDEX IF NOT EXISTS idx_documents_company         ON documents (company);
 CREATE INDEX IF NOT EXISTS idx_documents_language        ON documents (language);
 CREATE INDEX IF NOT EXISTS idx_documents_fiscal_year     ON documents (fiscal_year);
 CREATE INDEX IF NOT EXISTS idx_documents_status          ON documents (status);
@@ -99,7 +104,9 @@ CREATE OR REPLACE FUNCTION match_chunks(
     match_count         INT   DEFAULT 5,
     match_threshold     FLOAT DEFAULT 0.5,
     filter_language     TEXT  DEFAULT NULL,
-    filter_fiscal_year  TEXT  DEFAULT NULL
+    filter_fiscal_year  TEXT  DEFAULT NULL,
+    filter_group        TEXT  DEFAULT NULL,
+    filter_company      TEXT  DEFAULT NULL
 )
 RETURNS TABLE (
     id              BIGINT,
@@ -111,6 +118,8 @@ RETURNS TABLE (
     source_type     TEXT,
     display_name    TEXT,
     report_group    TEXT,
+    "group"         TEXT,
+    company         TEXT,
     category        TEXT,
     language        TEXT,
     fiscal_year     TEXT,
@@ -129,6 +138,7 @@ BEGIN
         dc.text_content, dc.metadata,
         d.file_name, d.source_type,
         d.display_name, d.report_group,
+        d."group", d.company,
         d.category, d.language, d.fiscal_year,
         d.status, d.confidentiality, d.tags, d.publish_date,
         1 - (dc.embedding <=> query_embedding) AS similarity
@@ -138,6 +148,8 @@ BEGIN
       AND 1 - (dc.embedding <=> query_embedding) >= match_threshold
       AND (filter_language IS NULL OR d.language = filter_language)
       AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
+      AND (filter_group IS NULL OR d."group" = filter_group)
+      AND (filter_company IS NULL OR d.company = filter_company)
     ORDER BY dc.embedding <=> query_embedding
     LIMIT match_count;
 END;
@@ -153,7 +165,9 @@ CREATE OR REPLACE FUNCTION match_chunks_hybrid(
     match_threshold     FLOAT DEFAULT 0.3,
     rrf_k               INT   DEFAULT 60,
     filter_language     TEXT  DEFAULT NULL,
-    filter_fiscal_year  TEXT  DEFAULT NULL
+    filter_fiscal_year  TEXT  DEFAULT NULL,
+    filter_group        TEXT  DEFAULT NULL,
+    filter_company      TEXT  DEFAULT NULL
 )
 RETURNS TABLE (
     id              BIGINT,
@@ -165,6 +179,8 @@ RETURNS TABLE (
     source_type     TEXT,
     display_name    TEXT,
     report_group    TEXT,
+    "group"         TEXT,
+    company         TEXT,
     category        TEXT,
     language        TEXT,
     fiscal_year     TEXT,
@@ -185,6 +201,7 @@ BEGIN
             dc.id, dc.document_id, dc.chunk_index,
             dc.text_content, dc.metadata,
             d.file_name, d.source_type, d.display_name, d.report_group,
+            d."group", d.company,
             d.category, d.language, d.fiscal_year,
             d.status, d.confidentiality, d.tags, d.publish_date,
             1 - (dc.embedding <=> query_embedding) AS sim,
@@ -195,6 +212,8 @@ BEGIN
           AND 1 - (dc.embedding <=> query_embedding) >= match_threshold
           AND (filter_language IS NULL OR d.language = filter_language)
           AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
+          AND (filter_group IS NULL OR d."group" = filter_group)
+          AND (filter_company IS NULL OR d.company = filter_company)
         ORDER BY dc.embedding <=> query_embedding
         LIMIT match_count * 2
     ),
@@ -203,6 +222,7 @@ BEGIN
             dc.id, dc.document_id, dc.chunk_index,
             dc.text_content, dc.metadata,
             d.file_name, d.source_type, d.display_name, d.report_group,
+            d."group", d.company,
             d.category, d.language, d.fiscal_year,
             d.status, d.confidentiality, d.tags, d.publish_date,
             ts_rank(dc.fts, websearch_to_tsquery('simple', query_text)) AS sim,
@@ -212,6 +232,8 @@ BEGIN
         WHERE dc.fts @@ websearch_to_tsquery('simple', query_text)
           AND (filter_language IS NULL OR d.language = filter_language)
           AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
+          AND (filter_group IS NULL OR d."group" = filter_group)
+          AND (filter_company IS NULL OR d.company = filter_company)
         ORDER BY ts_rank(dc.fts, websearch_to_tsquery('simple', query_text)) DESC
         LIMIT match_count * 2
     ),
@@ -226,6 +248,8 @@ BEGIN
             COALESCE(v.source_type, f.source_type) AS source_type,
             COALESCE(v.display_name, f.display_name) AS display_name,
             COALESCE(v.report_group, f.report_group) AS report_group,
+            COALESCE(v."group", f."group") AS "group",
+            COALESCE(v.company, f.company) AS company,
             COALESCE(v.category, f.category) AS category,
             COALESCE(v.language, f.language) AS language,
             COALESCE(v.fiscal_year, f.fiscal_year) AS fiscal_year,
@@ -248,6 +272,7 @@ BEGIN
         c.id, c.document_id, c.chunk_index,
         c.text_content, c.metadata,
         c.file_name, c.source_type, c.display_name, c.report_group,
+        c."group", c.company,
         c.category, c.language, c.fiscal_year,
         c.status, c.confidentiality, c.tags, c.publish_date,
         c.vector_sim AS similarity,

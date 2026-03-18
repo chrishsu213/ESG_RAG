@@ -75,11 +75,10 @@ class SemanticRetriever:
         threshold: float = 0.5,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """純向量語義搜尋（使用 match_chunks RPC）。
-        language: 若指定（如 'en'），只搜該語言的文件。
-        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
-        """
+        """純向量語義搜尋（使用 match_chunks RPC）。"""
         query_embedding = self._embed_query(query)
         params = {
             "query_embedding": query_embedding,
@@ -90,6 +89,10 @@ class SemanticRetriever:
             params["filter_language"] = language
         if fiscal_year:
             params["filter_fiscal_year"] = fiscal_year
+        if group:
+            params["filter_group"] = group
+        if company:
+            params["filter_company"] = company
         result = self._client.rpc("match_chunks", params).execute()
         return self._apply_time_weight(result.data or [])
 
@@ -102,14 +105,11 @@ class SemanticRetriever:
         threshold: float = 0.3,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
         expand_query: bool = True,
     ) -> list[dict[str, Any]]:
-        """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。
-        language: 若指定（如 'en'），只搜該語言的文件。
-        fiscal_year: 若指定（如 '2024'），只搜該年度的文件。
-        expand_query: 是否展開查詢以提升召回率。
-        如果 hybrid RPC 尚未建立，自動退回純向量搜尋。
-        """
+        """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。"""
         # 建立查詢清單（原始 + 展開）
         queries = [query]
         if expand_query:
@@ -132,6 +132,10 @@ class SemanticRetriever:
                 params["filter_language"] = language
             if fiscal_year:
                 params["filter_fiscal_year"] = fiscal_year
+            if group:
+                params["filter_group"] = group
+            if company:
+                params["filter_company"] = company
             return self._client.rpc("match_chunks_hybrid", params).execute().data or []
 
         logger = logging.getLogger(__name__)
@@ -156,7 +160,7 @@ class SemanticRetriever:
         except Exception as e:
             if "match_chunks_hybrid" in str(e):
                 logger.info("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
-                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year)
+                return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year, group=group, company=company)
             raise
 
         return self._apply_time_weight(all_results)

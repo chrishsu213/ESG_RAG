@@ -20,7 +20,7 @@ RAW_DATA_DIR = os.path.join(BASE_DIR, "raw_data")
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase import create_client
-from config import _get_secret
+from config import _get_secret, DEFAULT_GROUP
 from modules.uploader import Uploader
 from modules.parser_pdf import PdfParser
 from modules.parser_docx import DocxParser
@@ -113,7 +113,7 @@ def fetch_system_stats():
 @st.cache_data(ttl=10)
 def fetch_documents():
     res = (client.table("documents")
-        .select("id, file_name, file_hash, source_type, category, display_name, report_group, language, status, confidentiality, fiscal_year, tags, created_at")
+        .select("id, file_name, file_hash, source_type, category, display_name, report_group, \"group\", company, language, status, confidentiality, fiscal_year, tags, created_at")
         .order("created_at", desc=True)
         .execute()
     )
@@ -134,7 +134,7 @@ def fetch_chunks_for_document(doc_id: int):
     )
     return res.data
 
-def process_url(url: str, category: str, display_name: str, report_group: str = ""):
+def process_url(url: str, category: str, display_name: str, report_group: str = "", group: str = "", company: str = ""):
     """處理 URL 的完整 Pipeline（自動提取頁面標題）"""
     uploader = Uploader(client)
     doc_info = uploader.process(url)
@@ -176,6 +176,8 @@ def process_url(url: str, category: str, display_name: str, report_group: str = 
         category=category,
         display_name=final_name,
         report_group=report_group if report_group.strip() else None,
+        group=group if group.strip() else None,
+        company=company if company.strip() else None,
     )
     exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
     return True, f"{len(chunks)} 段 | 📄 {final_name}"
@@ -224,7 +226,7 @@ elif page == "📤 上傳與匯入":
     st.title("📤 上傳與匯入")
     
     # ── 共用欄位：分類、命名、報告群組 ──────────────
-    col_cat, col_name, col_group = st.columns(3)
+    col_cat, col_name, col_rg = st.columns(3)
     with col_cat:
         upload_category = st.selectbox(
             "📁 文件分類",
@@ -237,13 +239,47 @@ elif page == "📤 上傳與匯入":
             "📝 自訂顯示名稱（留空用檔名）",
             key="upload_display_name"
         )
-    with col_group:
+    with col_rg:
         upload_report_group = st.text_input(
             "📎 所屬報告（拆章節用）",
             placeholder="例如：2024永續報告書",
             key="upload_report_group",
             help="將多個章節歸為同一份報告。整份上傳或非報告可留空。"
         )
+    
+    # ── 集團 / 子公司 ──────────────────────────────
+    col_grp, col_comp = st.columns(2)
+    with col_grp:
+        # 動態撈取已有的集團名稱
+        _grp_res = client.table("documents").select('"group"').not_.is_("group", "null").execute()
+        _existing_groups = sorted(set(r["group"] for r in (_grp_res.data or []) if r.get("group")))
+        if not _existing_groups:
+            _existing_groups = [DEFAULT_GROUP]
+        upload_group = st.selectbox(
+            "🏢 集團",
+            _existing_groups + ["（新增集團）"],
+            index=0,
+            key="upload_group",
+        )
+        if upload_group == "（新增集團）":
+            upload_group = st.text_input("輸入新集團名稱", key="upload_group_new")
+    with col_comp:
+        # 動態撈取同集團內的子公司
+        if upload_group and upload_group != "（新增集團）":
+            _comp_res = client.table("documents").select("company").eq("group", upload_group).not_.is_("company", "null").execute()
+            _existing_comps = sorted(set(r["company"] for r in (_comp_res.data or []) if r.get("company")))
+        else:
+            _existing_comps = []
+        if not _existing_comps:
+            _existing_comps = [upload_group]  # 預設子公司名 = 集團名
+        upload_company = st.selectbox(
+            "🏭 子公司",
+            _existing_comps + ["（新增子公司）"],
+            index=0,
+            key="upload_company",
+        )
+        if upload_company == "（新增子公司）":
+            upload_company = st.text_input("輸入新子公司名稱", key="upload_company_new")
     
     st.divider()
     
@@ -412,6 +448,8 @@ elif page == "📤 上傳與匯入":
                                 category=upload_category,
                                 display_name=final_name,
                                 report_group=rg,
+                                group=upload_group if upload_group else None,
+                                company=upload_company if upload_company else None,
                             )
                             exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
                             
@@ -518,6 +556,8 @@ elif page == "📤 上傳與匯入":
                             category=upload_category,
                             display_name=display if len(batch_files) == 1 else os.path.splitext(bf.name)[0],
                             report_group=rg,
+                            group=upload_group if upload_group else None,
+                            company=upload_company if upload_company else None,
                         )
                         exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
                         
@@ -563,7 +603,7 @@ elif page == "📤 上傳與匯入":
             if url_input and st.button("開始抓取", type="primary", key="fetch_url"):
                 with st.spinner("正在抓取..."):
                     try:
-                        ok, msg = process_url(url_input, upload_category, upload_display_name, upload_report_group)
+                        ok, msg = process_url(url_input, upload_category, upload_display_name, upload_report_group, upload_group, upload_company)
                         if ok:
                             st.success(f"✅ 入庫成功：{msg}")
                         else:
@@ -621,7 +661,7 @@ elif page == "📤 上傳與匯入":
                     for i, url in enumerate(urls):
                         bp.progress(int((i / len(urls)) * 100), text=f"({i+1}/{len(urls)})")
                         try:
-                            ok, _ = process_url(url, upload_category, "", upload_report_group)
+                            ok, _ = process_url(url, upload_category, "", upload_report_group, upload_group, upload_company)
                             ok_n += 1 if ok else 0
                             skip_n += 0 if ok else 1
                         except Exception:
@@ -679,7 +719,7 @@ elif page == "📤 上傳與匯入":
                     for i, url in enumerate(c_urls):
                         bp.progress(int((i / len(c_urls)) * 100), text=f"({i+1}/{len(c_urls)})")
                         try:
-                            ok, msg = process_url(url, upload_category, "", upload_report_group)
+                            ok, msg = process_url(url, upload_category, "", upload_report_group, upload_group, upload_company)
                             if ok:
                                 ok_n += 1
                             else:
@@ -836,12 +876,15 @@ elif page == "🗃️ 文件管理":
         
         # 確保欄位存在（相容舊資料）
         for col, default in [("category", "其他"), ("display_name", None), ("report_group", None),
+                             ("group", None), ("company", None),
                              ("language", "zh-TW"), ("status", "已發布"), ("confidentiality", "公開"),
                              ("fiscal_year", None), ("tags", None)]:
             if col not in df.columns:
                 df[col] = default
         df["display_name"] = df["display_name"].fillna(df["file_name"])
         df["report_group"] = df["report_group"].fillna("")
+        df["group"] = df["group"].fillna("")
+        df["company"] = df["company"].fillna("")
         df["language"] = df["language"].fillna("zh-TW")
         df["status"] = df["status"].fillna("已發布")
         df["confidentiality"] = df["confidentiality"].fillna("公開")
@@ -873,7 +916,7 @@ elif page == "🗃️ 文件管理":
             
             with st.expander(f"📂 {cat}（{len(cat_df)} 份）", expanded=False):
                 # 使用 data_editor 實現 inline 編輯
-                edit_df = cat_df[["id", "display_name", "category", "report_group",
+                edit_df = cat_df[["id", "display_name", "category", "group", "company", "report_group",
                                   "language", "status", "confidentiality", "fiscal_year",
                                   "source_type", "created_at"]].copy()
                 
@@ -883,6 +926,8 @@ elif page == "🗃️ 文件管理":
                         "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
                         "display_name": st.column_config.TextColumn("文件名稱", width="large"),
                         "category": st.column_config.SelectboxColumn("分類", options=CATEGORY_OPTIONS, width="small"),
+                        "group": st.column_config.TextColumn("集團", width="small"),
+                        "company": st.column_config.TextColumn("子公司", width="small"),
                         "report_group": st.column_config.TextColumn("所屬報告", width="medium"),
                         "language": st.column_config.SelectboxColumn("語言", options=LANGUAGE_OPTIONS, width="small"),
                         "status": st.column_config.SelectboxColumn("狀態", options=STATUS_OPTIONS, width="small"),
@@ -903,7 +948,7 @@ elif page == "🗃️ 文件管理":
                 with col_save:
                     if st.button(f"💾 儲存 {cat} 的修改", key=f"save_{cat}"):
                         changes = 0
-                        editable_cols = ["display_name", "category", "report_group",
+                        editable_cols = ["display_name", "category", "group", "company", "report_group",
                                          "language", "status", "confidentiality", "fiscal_year"]
                         for idx, row in edited.iterrows():
                             orig = edit_df[edit_df["id"] == row["id"]]
@@ -1074,16 +1119,68 @@ elif page == "💬 AI 問答":
             help="混合搜尋結合向量語義和關鍵字匹配。AI 精排會多一次 API 呼叫。"
         )
         chat_top_k = st.slider("參考段落數", 3, 10, 5, key="chat_top_k")
-        chat_fiscal_year = st.text_input(
-            "📅 限定會計年度",
-            placeholder="如 2024，留空不限",
-            key="chat_fiscal_year",
-            help="指定會計年度範圍，如 2024。留空則搜尋所有年度（較新的自動排前）。"
-        )
+        
+        # ── 進階篩選 ──────────────────────────────
+        with st.expander("▶ 進階篩選", expanded=False):
+            # 動態撈取選項
+            _all_docs = client.table("documents").select('"group", company, fiscal_year, category').execute().data or []
+            _all_groups = sorted(set(r["group"] for r in _all_docs if r.get("group")))
+            _all_companies = sorted(set(r["company"] for r in _all_docs if r.get("company")))
+            _all_years = sorted(set(r["fiscal_year"] for r in _all_docs if r.get("fiscal_year")), reverse=True)
+            _all_cats = sorted(set(r["category"] for r in _all_docs if r.get("category")))
+            
+            if not _all_groups:
+                _all_groups = [DEFAULT_GROUP]
+            
+            # 集團（多選，預設台泥企業團）
+            chat_groups = st.multiselect(
+                "🏢 集團",
+                _all_groups,
+                default=[DEFAULT_GROUP] if DEFAULT_GROUP in _all_groups else _all_groups[:1],
+                key="chat_groups",
+            )
+            
+            # 子公司（checkbox 全部 + 多選鎖定）
+            if chat_groups:
+                _grp_companies = sorted(set(
+                    r["company"] for r in _all_docs
+                    if r.get("company") and r.get("group") in chat_groups
+                ))
+            else:
+                _grp_companies = _all_companies
+            
+            chat_company_all = st.checkbox("全部子公司", value=True, key="chat_company_all")
+            if chat_company_all:
+                chat_companies = st.multiselect("🏭 子公司", _grp_companies, default=_grp_companies, disabled=True, key="chat_companies")
+            else:
+                chat_companies = st.multiselect("🏭 子公司", _grp_companies, key="chat_companies")
+            
+            # 年度（checkbox 全部 + 多選鎖定）
+            chat_year_all = st.checkbox("全部年度", value=True, key="chat_year_all")
+            if chat_year_all:
+                chat_years = st.multiselect("📅 年度", _all_years, default=_all_years, disabled=True, key="chat_years")
+            else:
+                chat_years = st.multiselect("📅 年度", _all_years, key="chat_years")
+            
+            # 報告類別（checkbox 全部 + 多選鎖定）
+            chat_cat_all = st.checkbox("全部類別", value=True, key="chat_cat_all")
+            if chat_cat_all:
+                chat_categories = st.multiselect("📂 報告類別", _all_cats, default=_all_cats, disabled=True, key="chat_categories")
+            else:
+                chat_categories = st.multiselect("📂 報告類別", _all_cats, key="chat_categories")
         
         if st.button("🗑️ 清除對話", key="clear_chat"):
             st.session_state["chat_history"] = []
             st.rerun()
+    
+    # ── 解析篩選條件 ──────────────────────────────
+    _selected_group = chat_groups[0] if len(chat_groups) == 1 else None
+    _selected_company = None
+    if not chat_company_all and len(chat_companies) == 1:
+        _selected_company = chat_companies[0]
+    _selected_fiscal_year = None
+    if not chat_year_all and len(chat_years) == 1:
+        _selected_fiscal_year = chat_years[0]
     
     # ── 初始化對話歷史 ────────────────────────────
     if "chat_history" not in st.session_state:
@@ -1131,16 +1228,47 @@ elif page == "💬 AI 問答":
                 for m in st.session_state["chat_history"][:-1]  # 排除剛加入的
             ]
             
-            # 串流搜尋 + 生成
-            with st.spinner("搜尋知識庫中..."):
-                result = rag.ask_stream(
-                    question=prompt,
-                    history=history_for_rag,
-                    search_mode=search_mode,
-                    top_k=chat_top_k,
-                    fiscal_year=chat_fiscal_year.strip() or None,
-                )
-                sources = result["sources"]
+            # 判斷是否觸發多輪比較
+            _is_compare = False
+            _compare_groups = []
+            
+            if len(chat_groups) >= 2:
+                # 多集團比較
+                _is_compare = True
+                _compare_groups = [{"group": g} for g in chat_groups]
+            else:
+                # Regex 偵測比較意圖
+                _known = _all_companies if '_all_companies' in dir() else []
+                _detect = rag.detect_comparison(prompt, _known)
+                if _detect and _detect.get("dimension") == "company" and len(_detect.get("values", [])) >= 2:
+                    _is_compare = True
+                    _compare_groups = [{"company": v} for v in _detect["values"]]
+            
+            if _is_compare:
+                with st.spinner("比較搜尋中..."):
+                    result = rag.ask_compare(
+                        question=prompt,
+                        groups=_compare_groups,
+                        history=history_for_rag,
+                        search_mode=search_mode,
+                        top_k=chat_top_k,
+                        language=None,
+                        source="admin_ui_compare",
+                    )
+                    sources = result["sources"]
+            else:
+                # 普通搜尋
+                with st.spinner("搜尋知識庫中..."):
+                    result = rag.ask_stream(
+                        question=prompt,
+                        history=history_for_rag,
+                        search_mode=search_mode,
+                        top_k=chat_top_k,
+                        fiscal_year=_selected_fiscal_year,
+                        group=_selected_group,
+                        company=_selected_company,
+                    )
+                    sources = result["sources"]
             
             # 串流輸出答案（逐 token 顯示）
             answer_text = st.write_stream(result["stream"])

@@ -91,6 +91,8 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `use_hybrid` | bool | ❌ | true | 是否使用混合搜尋 |
 | `language` | string | ❌ | null | 語言篩選 (`zh-TW` / `en`) |
 | `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
+| `group` | string | ❌ | `"台泥企業團"` | 集團篩選，預設台泥企業團。傳 `null` 搜全部集團 |
+| `company` | string | ❌ | null | 子公司篩選，null 則不限 |
 
 **請求範例**：
 ```json
@@ -110,6 +112,22 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 }
 ```
 
+**搜尋同業資料**：
+```json
+{
+  "query": "碳排放目標",
+  "group": null
+}
+```
+
+**搜尋特定子公司**：
+```json
+{
+  "query": "儲能業務",
+  "company": "台泥儲能"
+}
+```
+
 **回應範例**：
 ```json
 {
@@ -124,7 +142,9 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
       "page_end": 46,
       "similarity": 0.8732,
       "search_type": "vector",
-      "category": "永續報告書"
+      "category": "永續報告書",
+      "group": "台泥企業團",
+      "company": "台泥"
     }
   ],
   "count": 5
@@ -150,6 +170,8 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `history` | array | ❌ | [] | 對話歷史 |
 | `language` | string | ❌ | null | 語言篩選 |
 | `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
+| `group` | string | ❌ | `"台泥企業團"` | 集團篩選，預設台泥企業團。傳 `null` 搜全部集團 |
+| `company` | string | ❌ | null | 子公司篩選，null 則不限 |
 
 **請求範例**：
 ```json
@@ -199,6 +221,8 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 ```
 
 **請求參數**：與 `/api/ask` 完全相同。
+
+> ℹ️ **集團篩選**：`group` 預設為 `"台泥企業團"`。若要搜尋同業資料，請明確傳入 `"group": null`。
 
 **回應格式**：`text/event-stream`（Server-Sent Events），逐 token 回傳：
 
@@ -362,3 +386,18 @@ adjusted_score = similarity × 0.9 + year_score × 0.1
 | 2022 | 0.40 |
 
 > 💡 **向下相容**：`fiscal_year` 參數是可選的。現有程式不做任何修改即可自動享受時間加權排序的優化。只有需要精確篩選特定年份時，才需要加上 `fiscal_year` 參數。
+
+---
+
+## 集團篩選說明
+
+所有搜尋與問答端點支援 `group` 與 `company` 篩選參數：
+
+| 參數 | 預設值 | 行為 |
+|------|--------|------|
+| `group` | `"台泥企業團"` | 只搜台泥企業團的文件 |
+| `group: null` | 無篩選 | 搜尋所有集團（含同業） |
+| `company` | `null` | 不限子公司 |
+| `company: "台泥儲能"` | 指定值 | 只搜該子公司文件 |
+
+> ℹ️ **外部程式零修改**：現有呼叫不帶 `group` 參數，預設就是台泥企業團，行為不變。要搜同業需明確傳 `"group": null`。
