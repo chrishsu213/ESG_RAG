@@ -344,7 +344,7 @@ class SemanticRetriever:
     @staticmethod
     def _apply_time_weight(
         results: list[dict[str, Any]],
-        time_weight: float = 0.1,
+        time_weight: float = 0.25,
     ) -> list[dict[str, Any]]:
         """根據 fiscal_year 對搜尋結果做軟排序加權。
 
