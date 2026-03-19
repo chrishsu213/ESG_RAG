@@ -29,7 +29,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY
+from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 from supabase import create_client
 from modules.crawler import SiteCrawler
 from modules.pipeline import DocumentIngestionPipeline
@@ -84,7 +84,6 @@ def process_url(client, url: str, category: str, language: str = "zh-TW") -> tup
     """處理單一 URL 的完整 Pipeline。"""
     pipeline = DocumentIngestionPipeline(
         supabase_client=client,
-        gemini_api_key=GEMINI_API_KEY,
     )
     result = pipeline.ingest(url, category=category, language=language)
     if result.success:

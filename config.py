@@ -41,13 +41,13 @@ for _ls_key in ("LANGCHAIN_TRACING_V2", "LANGCHAIN_API_KEY", "LANGCHAIN_PROJECT"
 # ── 延遲載入密鑰 ──────────────────────────────────────
 # 各模組 import 時不會立即解析密鑰值，而是在首次存取時才呼叫 _get_secret()。
 # 這確保 Streamlit Cloud 的 st.secrets 在讀取時已準備好。
-_SECRET_KEYS = {"SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GEMINI_API_KEY"}
+_SECRET_KEYS = {"SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
 _resolved_secrets: dict[str, str] = {}
 
 
 def __getattr__(name: str) -> str:
     """Module-level __getattr__：延遲載入密鑰。
-    當其他模組執行 `from config import GEMINI_API_KEY` 時，
+    當其他模組執行 `from config import SUPABASE_URL` 時，
     Python 會呼叫此函式來取得值（僅在模組層級找不到時）。
     """
     if name in _SECRET_KEYS:
