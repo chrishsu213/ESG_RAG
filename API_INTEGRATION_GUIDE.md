@@ -166,7 +166,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 |------|------|------|------|------|
 | `question` | string | ✅ | — | 使用者的問題 |
 | `top_k` | int | ❌ | 5 | 參考段落數 (1-20) |
-| `search_mode` | string | ❌ | `"hybrid"` | `"hybrid"` 或 `"hybrid_rerank"` |
+| `search_mode` | string | ❌ | `"hybrid"` | `"hybrid"`（推薦）或 `"hybrid_rerank"`（使用 Ranking API） |
 | `history` | array | ❌ | [] | 對話歷史 |
 | `language` | string | ❌ | null | 語言篩選 |
 | `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
@@ -367,25 +367,36 @@ curl -X POST https://rag-api-1019292564477.asia-east1.run.app/api/ask \
 
 ---
 
-## 時間加權排序（自動生效）
+## 多因子加權排序（自動生效）
 
-所有搜尋結果會根據文件的 `fiscal_year` 自動進行時間加權排序，**較新的文件排名更前**。此功能自動生效，不需要額外參數。
+所有搜尋結果會根據文件的 `fiscal_year` 和 `category` 自動進行多因子加權排序，**較新、較權威的文件排名更前**。此功能自動生效，不需要額外參數。
 
 **排序公式**：
 ```
-adjusted_score = similarity × 0.9 + year_score × 0.1
+adjusted_score = similarity × 0.60 + year_score × 0.25 + source_weight × 0.15
 ```
 
-| fiscal_year | year_score（以 2026 為當年） |
+**年份分數**（以 2026 為當年）：
+
+| fiscal_year | year_score |
 |-------------|:--:|
 | 2026 | 1.00 |
 | 2025 | 0.85 |
 | 2024 | 0.70 |
 | 2023 | 0.55 |
-| 未填 | 0.50 |
 | 2022 | 0.40 |
+| 未填 | 0.70 |
 
-> 💡 **向下相容**：`fiscal_year` 參數是可選的。現有程式不做任何修改即可自動享受時間加權排序的優化。只有需要精確篩選特定年份時，才需要加上 `fiscal_year` 參數。
+**來源類型權重**（依 `category` 欄位）：
+
+| category | source_weight | 理由 |
+|----------|:---:|------|
+| 永續報告書 | 1.00 | 最權威，ESG 核心文件 |
+| 網頁 | 0.90 | 最即時，通常是最新消息 |
+| 年度報告 | 0.75 | 有 ESG 章節但非主文件 |
+| 其他 | 0.60 | 未分類 / 其他類型 |
+
+> 💡 **向下相容**：現有程式不做任何修改即可自動享受加權排序的優化。
 
 ---
 

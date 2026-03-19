@@ -335,9 +335,9 @@ class SemanticRetriever:
             if isinstance(expanded, list):
                 return [str(q).strip() for q in expanded[:2] if q and str(q).strip()]
         except json.JSONDecodeError as e:
-            print(f"[RETRIEVER] 查詢展開 JSON 解析失敗：{e}")
+            logger.debug(f"[RETRIEVER] 查詢展開 JSON 解析失敗：{e}")
         except Exception as e:
-            print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
+            logger.debug(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
         return []
 
     # ── 多因子加權排序 ──────────────────────────────────

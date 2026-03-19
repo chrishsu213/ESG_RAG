@@ -12,3 +12,4 @@ streamlit>=1.33.0
 pandas>=2.0.0
 langsmith>=0.1.0
 google-cloud-discoveryengine>=0.13.0
+markdownify>=0.12.0
