@@ -399,14 +399,24 @@ class SemanticRetriever:
                 )
 
             # ── 加權合成 ──
-            # 動態讀取權重（優先使用傳入值，否則從 rag_config 取，最後 fallback 硬碼預設值）
-            sw   = sim_weight    if sim_weight    is not None else self._rag_config.get("sim_weight",    float)
-            tw   = time_weight   if time_weight   is not None else self._rag_config.get("year_weight",   float)
-            srcw = source_weight if source_weight is not None else self._rag_config.get("source_weight", float)
-            # 最終安全 fallback（萬一 rag_config 回傳 None）
-            sw   = sw   if sw   is not None else 0.60
-            tw   = tw   if tw   is not None else 0.25
-            srcw = srcw if srcw is not None else 0.15
+            # 動態讀取權重（防禦老舊 cached 物件沒有 _rag_config）
+            _cfg = getattr(self, '_rag_config', None)
+            if _cfg is not None and sim_weight is None:
+                sw = _cfg.get("sim_weight", float)
+            else:
+                sw = sim_weight if sim_weight is not None else 0.60
+            if _cfg is not None and time_weight is None:
+                tw = _cfg.get("year_weight", float)
+            else:
+                tw = time_weight if time_weight is not None else 0.25
+            if _cfg is not None and source_weight is None:
+                srcw = _cfg.get("source_weight", float)
+            else:
+                srcw = source_weight if source_weight is not None else 0.15
+            # 最終 None 安全 fallback
+            sw   = sw   if isinstance(sw,   float) else 0.60
+            tw   = tw   if isinstance(tw,   float) else 0.25
+            srcw = srcw if isinstance(srcw, float) else 0.15
 
             sim = r.get("similarity", 0) or 0
             r["adjusted_score"] = (
