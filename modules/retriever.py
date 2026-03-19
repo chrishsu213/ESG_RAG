@@ -192,16 +192,18 @@ class SemanticRetriever:
 
         try:
             reranked = self._rerank_via_ranking_api(query, results, top_k)
-            # 標記使用了 Ranking API
             for r in reranked:
                 r["_rerank_method"] = "ranking_api"
-            return reranked
+                # 用 Ranking API 分數取代原始 similarity，供時間加權使用
+                if "rerank_score" in r:
+                    r["similarity"] = r["rerank_score"]
+            return self._apply_time_weight(reranked)
         except Exception as e:
             logger.warning(f"[RERANK] Ranking API 失敗，退回 Gemini rerank：{e}")
             reranked = self._rerank_via_gemini(query, results, top_k)
             for r in reranked:
                 r["_rerank_method"] = "gemini_fallback"
-            return reranked
+            return self._apply_time_weight(reranked)
 
     def _rerank_via_ranking_api(
         self,
