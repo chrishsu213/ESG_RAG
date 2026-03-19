@@ -1295,6 +1295,14 @@ elif page == "💬 AI 問答":
             # 串流輸出答案（逐 token 顯示）
             answer_text = st.write_stream(result["stream"])
             
+            # 顯示 rerank 方法指標（用於驗證 Ranking API 是否生效）
+            _sr = result.get("search_results", [])
+            _rm = _sr[0].get("_rerank_method") if _sr else None
+            if _rm == "ranking_api":
+                st.caption("✅ Rerank: Vertex AI Ranking API")
+            elif _rm == "gemini_fallback":
+                st.caption("⚠️ Rerank: Gemini Fallback")
+            
             # 顯示來源
             if sources:
                 with st.expander(f"📚 引用來源 ({len(sources)} 筆)", expanded=False):
