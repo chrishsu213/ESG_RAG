@@ -20,6 +20,7 @@ from supabase import Client
 
 from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION, GCP_PROJECT
 
+logger = logging.getLogger(__name__)
 try:
     from langsmith import traceable
 except ImportError:
@@ -148,7 +149,6 @@ class SemanticRetriever:
                 logger.error(f"[Retriever] match_chunks_hybrid RPC 失敗：{type(e).__name__}: {e}")
                 raise
 
-        logger = logging.getLogger(__name__)
         try:
             # 平行發射多個檢索請求
             with ThreadPoolExecutor(max_workers=len(queries)) as executor:
