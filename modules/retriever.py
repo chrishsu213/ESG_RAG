@@ -173,7 +173,7 @@ class SemanticRetriever:
                 return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year, group=group, company=company)
             raise
 
-        return self._apply_time_weight(all_results)
+        return all_results
 
     # ── Re-ranking ─────────────────────────────────────
     @traceable(name="rerank")

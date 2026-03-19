@@ -136,7 +136,7 @@ class RagChat:
         if search_mode == "hybrid_rerank" and results:
             results = self._retriever.rerank(question, results, top_k=top_k)
         else:
-            results = results[:top_k]
+            results = self._retriever._apply_time_weight(results)[:top_k]
 
         if not results:
             return {
@@ -291,7 +291,7 @@ class RagChat:
         if search_mode == "hybrid_rerank" and results:
             results = self._retriever.rerank(question, results, top_k=top_k)
         else:
-            results = results[:top_k]
+            results = self._retriever._apply_time_weight(results)[:top_k]
 
         if not results:
             def empty_stream():
@@ -569,7 +569,7 @@ class RagChat:
             if search_mode == "hybrid_rerank" and results:
                 results = self._retriever.rerank(question, results, top_k=top_k)
             else:
-                results = results[:top_k]
+                results = self._retriever._apply_time_weight(results)[:top_k]
 
             for r in results:
                 r["_group_label"] = grp_label
