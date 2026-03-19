@@ -35,7 +35,7 @@ class SupabaseExporter:
             "file_hash": file_hash,
             "source_type": source_type,
             "category": category,
-            "display_name": display_name or file_name,
+            "display_name": display_name or (file_name.rsplit(".", 1)[0] if "." in file_name else file_name),
         }
         if report_group:
             record["report_group"] = report_group

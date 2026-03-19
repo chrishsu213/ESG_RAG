@@ -180,8 +180,8 @@ class RagChat:
             # 組合 context（引用標籤使用資料名稱+頁數）
             page_info = ""
             cite_label = ""
-            # cite_name 優先用 report_group（最簡潔），再用 doc_name 去掉副檔名
-            cite_name = r.get("report_group") or doc_name.rsplit(".", 1)[0]
+            # cite_name 直接用 doc_name 去採副檔名（入庫時應已自動填入）
+            cite_name = doc_name.rsplit(".", 1)[0] if "." in doc_name else doc_name
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
@@ -342,7 +342,7 @@ class RagChat:
 
             page_info = ""
             cite_label = ""
-            cite_name = r.get("report_group") or doc_name.rsplit(".", 1)[0]
+            cite_name = doc_name.rsplit(".", 1)[0] if "." in doc_name else doc_name
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
