@@ -18,7 +18,7 @@ from google.genai import types
 from google.cloud import discoveryengine_v1 as discoveryengine
 from supabase import Client
 
-from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION, GCP_PROJECT
+from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION, GCP_PROJECT, RagConfig
 
 logger = logging.getLogger(__name__)
 try:
@@ -46,11 +46,13 @@ class SemanticRetriever:
         self,
         supabase_client: Client,
         api_key: Optional[str] = None,
+        rag_config: Optional[RagConfig] = None,
     ) -> None:
         from config import get_genai_client
         self._client = supabase_client
         self._genai = get_genai_client(api_key)
         self._model = EMBEDDING_MODEL
+        self._rag_config = rag_config or RagConfig(supabase_client)
 
     @traceable(name="embed_query")
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5), reraise=True)
@@ -108,7 +110,7 @@ class SemanticRetriever:
         self,
         query: str,
         top_k: int = 5,
-        threshold: float = 0.3,
+        threshold: Optional[float] = None,
         language: Optional[str] = None,
         fiscal_year: Optional[str] = None,
         group: Optional[str] = None,
@@ -116,6 +118,9 @@ class SemanticRetriever:
         expand_query: bool = True,
     ) -> list[dict[str, Any]]:
         """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。"""
+        # 動態讀取 threshold（None 時從 rag_config 取）
+        if threshold is None:
+            threshold = self._rag_config.get("hybrid_threshold", float)
         # 建立查詢清單（原始 + 展開）
         queries = [query]
         if expand_query:
@@ -349,14 +354,14 @@ class SemanticRetriever:
     }
     _DEFAULT_SOURCE_WEIGHT = 0.6  # 其他 / 未分類
 
-    @staticmethod
     def _apply_time_weight(
+        self,
         results: list[dict[str, Any]],
-        sim_weight: float = 0.60,
-        time_weight: float = 0.25,
-        source_weight: float = 0.15,
+        sim_weight: Optional[float] = None,
+        time_weight: Optional[float] = None,
+        source_weight: Optional[float] = None,
     ) -> list[dict[str, Any]]:
-        """多因子加權排序。
+        """多因子加權排序。動態從 rag_config 讀取權重。
 
         公式：adjusted_score = similarity × sim_weight
                               + year_score × time_weight

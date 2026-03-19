@@ -164,3 +164,82 @@ def get_genai_client(api_key: str | None = None):
             "請確認：(1) 已啟用 Vertex AI API "
             "(2) ADC 已設定（gcloud auth application-default login）"
         ) from e
+
+
+# ── RAG 動態設定 ──────────────────────────────────────
+import time as _time
+
+class RagConfig:
+    """從 Supabase rag_config 表動態讀取 RAG 搜尋參數。
+
+    - 首次呼叫時從 DB 載入，之後 cache 60 秒
+    - DB 不可用時自動 fallback 到程式碼預設值
+    - 使用 get() 方法取得設定值
+    """
+
+    # 程式碼預設值（DB 不可用時的 fallback）
+    _DEFAULTS: dict[str, str] = {
+        "hybrid_threshold": "0.2",
+        "top_k_multiplier": "2",
+        "sim_weight":       "0.60",
+        "year_weight":      "0.25",
+        "source_weight":    "0.15",
+        "system_prompt":    "{{DEFAULT}}",
+    }
+    _CACHE_TTL = 60  # 秒
+
+    def __init__(self, supabase_client=None):
+        self._client = supabase_client
+        self._cache: dict[str, str] = {}
+        self._cache_ts: float = 0.0
+
+    def _load(self) -> None:
+        """從 Supabase 載入設定並更新 cache。"""
+        if self._client is None:
+            return
+        try:
+            rows = self._client.table("rag_config").select("key,value").execute().data or []
+            self._cache = {r["key"]: r["value"] for r in rows}
+            self._cache_ts = _time.monotonic()
+        except Exception:
+            pass  # 靜默失敗，使用舊 cache 或 defaults
+
+    def _ensure_fresh(self) -> None:
+        """若 cache 過期則重新載入。"""
+        if _time.monotonic() - self._cache_ts > self._CACHE_TTL:
+            self._load()
+
+    def get(self, key: str, cast=str):
+        """取得設定值，cast 可指定轉型（float/int/str）。"""
+        self._ensure_fresh()
+        raw = self._cache.get(key) or self._DEFAULTS.get(key, "")
+        try:
+            return cast(raw)
+        except (ValueError, TypeError):
+            return cast(self._DEFAULTS.get(key, "0"))
+
+    def get_all(self) -> dict[str, str]:
+        """取得所有設定值（含 defaults fallback）。"""
+        self._ensure_fresh()
+        result = dict(self._DEFAULTS)
+        result.update(self._cache)
+        return result
+
+    def set(self, key: str, value: str) -> bool:
+        """更新設定值到 Supabase，並立即刷新 cache。"""
+        if self._client is None:
+            return False
+        try:
+            self._client.table("rag_config").upsert(
+                {"key": key, "value": value},
+                on_conflict="key"
+            ).execute()
+            self._cache[key] = value
+            return True
+        except Exception:
+            return False
+
+    def invalidate_cache(self) -> None:
+        """強制下次請求重新載入 cache。"""
+        self._cache_ts = 0.0
+

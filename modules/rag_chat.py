@@ -38,8 +38,7 @@ class RagChat:
 
     _CHAT_MODEL = "gemini-2.5-flash"
 
-    _SYSTEM_PROMPT = (
-        f"今天是 {datetime.now().strftime('%Y年%m月%d日')}。"
+    _DEFAULT_SYSTEM_PROMPT = (
         """你是一位嚴謹的 ESG 與財務分析助理。請嚴格遵守以下規則：
 
 1. **只根據 <context> 標籤內的參考資料回答**。如果資料中沒有足夠的資訊，請誠實告知「根據目前資料庫中的資料，無法找到相關資訊」。
@@ -54,15 +53,29 @@ class RagChat:
 台泥113年度合併營收達新台幣1,546億元，較前一年增加41.4% [來源1]。每股盈餘為1.45元 [來源1]。在永續發展方面，台泥積極推動低碳建材... [來源2]。"""
     )
 
+    def _get_system_prompt(self) -> str:
+        """動態從 rag_config 讀取 System Prompt，{{DEFAULT}} 時使用程式碼預設值。"""
+        from config import RagConfig
+        if not hasattr(self, '_rag_config'):
+            self._rag_config = RagConfig(self._supabase)
+        raw = self._rag_config.get("system_prompt", str)
+        if raw == "{{DEFAULT}}" or not raw.strip():
+            template = self._DEFAULT_SYSTEM_PROMPT
+        else:
+            template = raw
+        today = datetime.now().strftime('%Y年%m月%d日')
+        return f"今天是 {today}。" + template
+
     def __init__(
         self,
         supabase_client: Client,
         api_key: Optional[str] = None,
     ) -> None:
-        from config import get_genai_client
+        from config import get_genai_client, RagConfig
         self._genai = get_genai_client(api_key)
-        self._retriever = SemanticRetriever(supabase_client, api_key=api_key)
         self._supabase = supabase_client
+        self._rag_config = RagConfig(supabase_client)
+        self._retriever = SemanticRetriever(supabase_client, api_key=api_key, rag_config=self._rag_config)
 
     def _log_usage(
         self,
@@ -183,7 +196,7 @@ class RagChat:
         messages = [
             types.Content(
                 role="user",
-                parts=[types.Part(text=self._SYSTEM_PROMPT)],
+                parts=[types.Part(text=self._get_system_prompt())],
             ),
             types.Content(
                 role="model",
@@ -339,7 +352,7 @@ class RagChat:
         messages = [
             types.Content(
                 role="user",
-                parts=[types.Part(text=self._SYSTEM_PROMPT)],
+                parts=[types.Part(text=self._get_system_prompt())],
             ),
             types.Content(
                 role="model",
