@@ -15,9 +15,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from google import genai
 from google.genai import types
+from google.cloud import discoveryengine_v1 as discoveryengine
 from supabase import Client
 
-from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
+from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION, GCP_PROJECT
 
 try:
     from langsmith import traceable
@@ -34,11 +35,11 @@ class SemanticRetriever:
     多模式搜尋器：
     - search()        → 純向量搜尋
     - hybrid_search() → 向量 + 全文混合搜尋 (RRF)
-    - rerank()        → 用 Gemini 對結果精排
+    - rerank()        → 用 Vertex AI Ranking API 對結果精排
     """
 
-    _RERANK_MODEL = "gemini-2.5-flash"      # Vertex AI GA 2.5
     _EXPAND_MODEL = "gemini-2.5-flash-lite"  # 極快、極便宜，用於查詢展開
+    _RERANK_MODEL = "gemini-2.5-flash"       # Ranking API fallback 用
 
     def __init__(
         self,
@@ -183,13 +184,72 @@ class SemanticRetriever:
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
         """
-        用 Gemini 對搜尋結果精排。
-        讓 AI 評分每個結果與問題的相關性，重新排序。
+        用 Vertex AI Ranking API 對搜尋結果精排。
+        若 Ranking API 失敗，退回 Gemini prompt-based rerank。
         """
         if not results:
             return results
 
-        # 組合 prompt
+        try:
+            return self._rerank_via_ranking_api(query, results, top_k)
+        except Exception as e:
+            logger.warning(f"[RERANK] Ranking API 失敗，退回 Gemini rerank：{e}")
+            return self._rerank_via_gemini(query, results, top_k)
+
+    def _rerank_via_ranking_api(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """使用 Vertex AI Ranking API (Discovery Engine) 精排。"""
+        # 懶初始化 RankServiceClient
+        if not hasattr(self, '_rank_client'):
+            self._rank_client = discoveryengine.RankServiceClient()
+
+        # 將搜尋結果轉換為 RankingRecord
+        records = []
+        for i, r in enumerate(results):
+            records.append(discoveryengine.RankingRecord(
+                id=str(i),
+                title=r.get("file_name", "") or "",
+                content=(r.get("text_content", "") or "")[:1024],
+            ))
+
+        ranking_config = (
+            f"projects/{GCP_PROJECT}/locations/global"
+            f"/rankingConfigs/default_ranking_config"
+        )
+
+        request = discoveryengine.RankRequest(
+            ranking_config=ranking_config,
+            model="semantic-ranker-default@latest",
+            top_n=top_k,
+            query=query,
+            records=records,
+        )
+
+        response = self._rank_client.rank(request=request)
+
+        # 根據 Ranking API 回傳的順序重組結果
+        reranked = []
+        for rec in response.records:
+            idx = int(rec.id)
+            if 0 <= idx < len(results):
+                r = results[idx].copy()
+                r["rerank_score"] = rec.score
+                reranked.append(r)
+
+        logger.info(f"[RERANK] Ranking API 完成：{len(reranked)} 筆結果")
+        return reranked[:top_k]
+
+    def _rerank_via_gemini(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Fallback：用 Gemini 對搜尋結果精排。"""
         docs_text = ""
         for i, r in enumerate(results):
             snippet = r["text_content"][:500]
@@ -212,25 +272,20 @@ class SemanticRetriever:
                 contents=[prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    response_mime_type="application/json",  # 強制 JSON 輸出
+                    response_mime_type="application/json",
                 ),
             )
-            # 解析 JSON 陣列
             ranking = json.loads(response.text.strip())
-
-            # 根據排序重組結果
             reranked = []
             for idx in ranking:
                 if isinstance(idx, int) and 1 <= idx <= len(results):
                     reranked.append(results[idx - 1])
-            # 加入未被排到的結果
             for r in results:
                 if r not in reranked:
                     reranked.append(r)
-
             return reranked[:top_k]
         except Exception as e:
-            print(f"[RERANK] Re-ranking 失敗，返回原始排序：{e}")
+            logger.warning(f"[RERANK] Gemini rerank 也失敗，返回原始排序：{e}")
             return results[:top_k]
 
     # ── 查詢展開 ───────────────────────────────────────

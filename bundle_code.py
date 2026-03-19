@@ -27,6 +27,9 @@ FILES = [
     "sql/schema.sql",
     "sql/migrations/007_add_fiscal_year_filter.sql",
     "sql/migrations/008_qa_feedback.sql",
+    "sql/migrations/009_usage_log.sql",
+    "sql/migrations/010_add_group_company.sql",
+    "deploy.sh",
     "requirements.txt",
     "requirements-api.txt",
     "Dockerfile",
@@ -36,7 +39,7 @@ FILES = [
 with open(OUTPUT, "w", encoding="utf-8") as out:
     out.write("=" * 80 + "\n")
     out.write("TCC RAG 知識庫 — 完整程式碼打包\n")
-    out.write(f"產生時間：2026-03-18\n")
+    out.write(f"產生時間：2026-03-19\n")
     out.write("=" * 80 + "\n\n")
 
     for fp in FILES:

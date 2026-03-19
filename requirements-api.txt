@@ -6,3 +6,4 @@ tenacity>=8.0.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
 langsmith>=0.1.0
+google-cloud-discoveryengine>=0.13.0
