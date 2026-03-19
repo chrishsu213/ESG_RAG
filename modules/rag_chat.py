@@ -177,16 +177,18 @@ class RagChat:
             }
             sources.append(source_info)
 
-            # 組合 context（引用標籤使用文件名+頁數，AI 直接在回答中複製）
+            # 組合 context（引用標籤使用資料名稱+頁數）
             page_info = ""
             cite_label = ""
+            # cite_name 優先用 report_group（最簡潔），再用 doc_name 去掉副檔名
+            cite_name = r.get("report_group") or doc_name.rsplit(".", 1)[0]
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
                 page_info = f"（第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
-                cite_label = f"{doc_name} p.{ps}"
+                cite_label = f"{cite_name} p.{ps}"
             else:
-                cite_label = doc_name
+                cite_label = cite_name
 
             context_parts.append(
                 f"[{cite_label}] 文件：{doc_name} {page_info}\n"
@@ -340,13 +342,14 @@ class RagChat:
 
             page_info = ""
             cite_label = ""
+            cite_name = r.get("report_group") or doc_name.rsplit(".", 1)[0]
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
                 page_info = f"（第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
-                cite_label = f"{doc_name} p.{ps}"
+                cite_label = f"{cite_name} p.{ps}"
             else:
-                cite_label = doc_name
+                cite_label = cite_name
 
             context_parts.append(
                 f"[{cite_label}] 文件：{doc_name} {page_info}\n"
