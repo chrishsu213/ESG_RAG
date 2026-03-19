@@ -373,20 +373,30 @@ class SemanticRetriever:
         if not results:
             return results
 
+        # 以「結果集中最新的年份」為基準（而非當前年）
+        # 確保最新報告永遠得 1.0 分，舊報告依差距遞減
+        def _extract_year(r: dict) -> int | None:
+            fy = r.get("fiscal_year")
+            if not fy:
+                return None
+            match = re.search(r"(\d{3,4})", str(fy))
+            if match:
+                y = int(match.group(1))
+                return y + 1911 if y < 1911 else y
+            return None
+
+        known_years = [y for r in results if (y := _extract_year(r)) is not None]
+        # 最新年不超過今年，防止資料錯誤
         current_year = datetime.now().year
+        anchor_year = min(max(known_years), current_year) if known_years else current_year
 
         for r in results:
-            # ── 年份分數 ──
-            fy = r.get("fiscal_year")
-            year_score = 0.7  # 未填年度給予中性偏高，避免懲罰未標記的新文件
-            if fy:
-                match = re.search(r"(\d{3,4})", str(fy))
-                if match:
-                    doc_year = int(match.group(1))
-                    if doc_year < 1911:
-                        doc_year += 1911
-                    years_diff = max(0, current_year - doc_year)
-                    year_score = max(0, 1.0 - years_diff * 0.15)
+            # ── 年份分數（以 anchor_year 為満分基準）──
+            doc_year = _extract_year(r)
+            year_score = 0.85  # 未填年度：假設接近最新，給予高分
+            if doc_year is not None:
+                years_diff = max(0, anchor_year - doc_year)
+                year_score = max(0.0, 1.0 - years_diff * 0.25)  # 每差1年 -0.25
 
             # ── 來源類型分數 ──
             cat = r.get("category", "") or ""
