@@ -177,15 +177,19 @@ class RagChat:
             }
             sources.append(source_info)
 
-            # 組合 context
+            # 組合 context（引用標籤使用文件名+頁數，AI 直接在回答中複製）
             page_info = ""
+            cite_label = ""
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
-                page_info = f" （第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+                page_info = f"（第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+                cite_label = f"{doc_name} p.{ps}"
+            else:
+                cite_label = doc_name
 
             context_parts.append(
-                f"[來源{i}] 文件：{doc_name}{page_info}\n"
+                f"[{cite_label}] 文件：{doc_name} {page_info}\n"
                 f"章節：{meta.get('section_title', '無')}\n"
                 f"內容：\n{r['text_content']}\n"
             )
@@ -227,7 +231,7 @@ class RagChat:
 {question}
 </user_query>
 
-請根據 <context> 內的參考資料回答，並在引用處標註 [來源N]。"""
+請根據 <context> 內的參考資料回答，並在句末引用處直接標註來源標籤，格式為 [文件名 p.頁數]（例如 [113年度年報 p.41] 或 [2024年永續報告書 p.65]）。標籤內容請直接複製 context 中每個段落開頭的方括號內容。"""
 
         messages.append(
             types.Content(
@@ -335,13 +339,17 @@ class RagChat:
             sources.append(source_info)
 
             page_info = ""
+            cite_label = ""
             if meta.get("page_start"):
                 ps = meta["page_start"]
                 pe = meta.get("page_end")
-                page_info = f" （第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+                page_info = f"（第{ps}{f'-{pe}' if pe and pe != ps else ''}頁）"
+                cite_label = f"{doc_name} p.{ps}"
+            else:
+                cite_label = doc_name
 
             context_parts.append(
-                f"[來源{i}] 文件：{doc_name}{page_info}\n"
+                f"[{cite_label}] 文件：{doc_name} {page_info}\n"
                 f"章節：{meta.get('section_title', '無')}\n"
                 f"內容：{r['text_content']}\n"
             )
@@ -381,7 +389,7 @@ class RagChat:
 {question}
 </user_query>
 
-請根據 <context> 內的參考資料回答，並在引用處標註 [來源N]。"""
+請根據 <context> 內的參考資料回答，並在句末引用處直接標註來源標籤，格式為 [文件名 p.頁數]（例如 [113年度年報 p.41] 或 [2024年永續報告書 p.65]）。標籤內容請直接複製 context 中每個段落開頭的方括號內容。"""
 
         messages.append(
             types.Content(
