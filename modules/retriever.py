@@ -340,16 +340,30 @@ class SemanticRetriever:
             print(f"[RETRIEVER] 查詢展開失敗，使用原始查詢：{e}")
         return []
 
-    # ── 時間加權排序 ───────────────────────────────────
+    # ── 多因子加權排序 ──────────────────────────────────
+    # 來源類型權重對照表
+    _SOURCE_WEIGHTS: dict[str, float] = {
+        "永續報告書": 1.0,     # 最權威，ESG 核心文件
+        "網頁":     0.9,       # 最即時，通常是最新消息
+        "年度報告": 0.75,      # 有 ESG 章節但非主文件
+    }
+    _DEFAULT_SOURCE_WEIGHT = 0.6  # 其他 / 未分類
+
     @staticmethod
     def _apply_time_weight(
         results: list[dict[str, Any]],
+        sim_weight: float = 0.60,
         time_weight: float = 0.25,
+        source_weight: float = 0.15,
     ) -> list[dict[str, Any]]:
-        """根據 fiscal_year 對搜尋結果做軟排序加權。
+        """多因子加權排序。
 
-        公式：adjusted_score = similarity * (1 - time_weight) + year_score * time_weight
-        year_score = 0~1，當年度為 1.0，每差一年遞減 0.15。
+        公式：adjusted_score = similarity × sim_weight
+                              + year_score × time_weight
+                              + source_score × source_weight
+
+        year_score   = 0~1，當年度為 1.0，每差一年遞減 0.15。
+        source_score = 依 category 對照 _SOURCE_WEIGHTS。
         """
         if not results:
             return results
@@ -357,20 +371,35 @@ class SemanticRetriever:
         current_year = datetime.now().year
 
         for r in results:
+            # ── 年份分數 ──
             fy = r.get("fiscal_year")
-            year_score = 0.7  # 未填年度給予中性偏高權重，避免懲罰未標記的新文件
+            year_score = 0.7  # 未填年度給予中性偏高，避免懲罰未標記的新文件
             if fy:
-                # 嘗試從 fiscal_year 提取數字年份（支援民國年 3 位數 + 西元年 4 位數）
                 match = re.search(r"(\d{3,4})", str(fy))
                 if match:
                     doc_year = int(match.group(1))
-                    if doc_year < 1911:  # 民國年轉換（如 113 → 2024）
+                    if doc_year < 1911:
                         doc_year += 1911
                     years_diff = max(0, current_year - doc_year)
                     year_score = max(0, 1.0 - years_diff * 0.15)
 
+            # ── 來源類型分數 ──
+            cat = r.get("category", "") or ""
+            src_type = r.get("source_type", "") or ""
+            if src_type == "web":
+                src_score = SemanticRetriever._SOURCE_WEIGHTS.get("網頁", 0.9)
+            else:
+                src_score = SemanticRetriever._SOURCE_WEIGHTS.get(
+                    cat, SemanticRetriever._DEFAULT_SOURCE_WEIGHT
+                )
+
+            # ── 加權合成 ──
             sim = r.get("similarity", 0) or 0
-            r["adjusted_score"] = sim * (1 - time_weight) + year_score * time_weight
+            r["adjusted_score"] = (
+                sim * sim_weight
+                + year_score * time_weight
+                + src_score * source_weight
+            )
 
         results.sort(key=lambda x: x.get("adjusted_score", 0), reverse=True)
         return results
