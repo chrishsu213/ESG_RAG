@@ -1148,16 +1148,7 @@ elif page == "💬 AI 問答":
     with st.sidebar:
         st.divider()
         st.markdown("#### 🔧 搜尋設定")
-        search_mode = st.radio(
-            "搜尋模式",
-            ["hybrid", "hybrid_rerank"],
-            format_func=lambda x: {
-                "hybrid": "🔍 混合搜尋（免費）",
-                "hybrid_rerank": "🎯 混合 + AI 精排",
-            }[x],
-            key="chat_search_mode",
-            help="混合搜尋結合向量語義和關鍵字匹配。AI 精排會多一次 API 呼叫。"
-        )
+        st.caption("🎯 Reranking 全面啟用（混合搜尋 + AI 精排）")
         chat_top_k = st.slider("參考段落數", 3, 10, 5, key="chat_top_k")
         
         # ── 進階篩選 ──────────────────────────────
@@ -1317,7 +1308,6 @@ elif page == "💬 AI 問答":
                         question=prompt,
                         groups=_compare_groups,
                         history=history_for_rag,
-                        search_mode=search_mode,
                         top_k=chat_top_k,
                         language=None,
                         source="admin_ui_compare",
@@ -1329,7 +1319,6 @@ elif page == "💬 AI 問答":
                     result = rag.ask_stream(
                         question=prompt,
                         history=history_for_rag,
-                        search_mode=search_mode,
                         top_k=chat_top_k,
                         fiscal_year=_selected_fiscal_year,
                         group=_selected_group,
