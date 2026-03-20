@@ -240,10 +240,15 @@ def render(client):
             continue
 
         with st.expander(f"{grp_label}（{len(grp_df)} 份）", expanded=False):
-            for cat in grp_cats:
-                cat_df = grp_df[grp_df["category"] == cat].copy()
-                if cat_df.empty:
-                    continue
-                st.markdown(f"##### {cat}（{len(cat_df)} 份）")
-                _doc_list(client, cat_df, page_key=f"{grp_label}_{cat}")
-                st.divider()
+            # 只顯示有資料的子分類 Tab
+            available_cats = [cat for cat in grp_cats if not grp_df[grp_df["category"] == cat].empty]
+            if not available_cats:
+                continue
+
+            tabs = st.tabs(available_cats)
+            for tab, cat in zip(tabs, available_cats):
+                with tab:
+                    cat_df = grp_df[grp_df["category"] == cat].copy()
+                    st.caption(f"{len(cat_df)} 份文件")
+                    _doc_list(client, cat_df, page_key=f"{grp_label}_{cat}")
+
