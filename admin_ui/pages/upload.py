@@ -226,8 +226,9 @@ def _render_single_upload(client, category, display_name, report_group,
             )
         else:
             raw_md = DocxParser().parse(temp_path)
-        parse_progress.progress(100, text="解析完成！")
+        parse_progress.progress(95, text="解析完成，清洗中...")
         cleaned_md = MarkdownCleaner().clean(raw_md)
+        parse_progress.progress(100, text="✅ 草稿就緒！")
         st.session_state["draft_md"]          = cleaned_md
         st.session_state["draft_path"]        = temp_path
         st.session_state["draft_filename"]    = uploaded_file.name
