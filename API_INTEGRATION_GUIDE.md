@@ -31,7 +31,16 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 
 ## 可用端點
 
-### 1. 健康檢查
+| # | Method | Path | 說明 |
+|---|--------|------|------|
+| 1 | GET | `/api/health` | 健康檢查（無需認證） |
+| 2 | GET | `/api/stats` | 知識庫統計 |
+| 3 | POST | `/api/search` | 語義搜尋（回傳 chunks） |
+| 4 | POST | `/api/ask` | RAG 問答（同步） |
+| 5 | POST | `/api/ask/stream` | RAG 問答（SSE 串流） |
+| 6 | POST | `/api/ask/compare` | 多組比較問答（SSE 串流） |
+| 7 | GET | `/api/documents` | 文件列表（分頁＋篩選） |
+| 8 | POST | `/api/feedback` | 儲存使用者回饋 |
 
 ```
 GET /api/health
@@ -275,6 +284,118 @@ while (true) {
 
 ---
 
+### 6. 多組比較問答 (SSE)
+
+```
+POST /api/ask/compare
+Content-Type: application/json
+X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
+```
+
+AI 對多個公司或年度分別搜尋後，交叉比較並輸出 Markdown 表格。適合「比較台泥與亞泥的碳排強度」此類問題。
+
+**請求參數**：
+| 欄位 | 類型 | 必填 | 說明 |
+|------|------|------|------|
+| `question` | string | ✅ | 比較問題 |
+| `groups` | array | ✅ | 2~6 組篩選條件，每組可含 `group`、`company`、`fiscal_year` |
+| `top_k` | int | ❌ | 每組參考段落數（預設 5） |
+| `language` | string? | ❌ | 語言篩選 |
+| `history` | array? | ❌ | 對話歷史 |
+
+**請求範例**：
+```json
+{
+  "question": "比較台泥與亞泥 2023 年的碳排放強度",
+  "groups": [
+    {"group": "台泥企業團", "fiscal_year": "2023"},
+    {"group": "亞泥",       "fiscal_year": "2023"}
+  ],
+  "top_k": 5
+}
+```
+
+**回應格式**：SSE 串流，與 `/api/ask/stream` 完全相同（`sources` → `token` → `done`）。
+
+---
+
+### 7. 文件列表
+
+```
+GET /api/documents
+X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
+```
+
+**Query Parameters**：
+| 參數 | 說明 | 範例 |
+|------|------|------|
+| `category` | 文件類別 | `永續報告書` |
+| `group` | 集團 | `台泥企業團` |
+| `company` | 子公司 | `台泥儲能` |
+| `fiscal_year` | 年度 | `2023` |
+| `source_type` | 來源類型 | `pdf` / `web` |
+| `limit` | 每頁筆數（預設 50） | `20` |
+| `offset` | 分頁起始（預設 0） | `40` |
+
+**回應範例**：
+```json
+{
+  "documents": [
+    {
+      "id": 101,
+      "file_name": "TCC_ESG_2023.pdf",
+      "display_name": "台泥 2023 永續報告書",
+      "category": "永續報告書",
+      "fiscal_year": "2023",
+      "group": "台泥企業團",
+      "source_type": "pdf",
+      "status": "active",
+      "created_at": "2024-03-15T08:30:00"
+    }
+  ],
+  "count": 10,
+  "total": 42
+}
+```
+
+---
+
+### 8. 使用者回饋
+
+```
+POST /api/feedback
+Content-Type: application/json
+X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
+```
+
+**請求參數**：
+| 欄位 | 類型 | 必填 | 說明 |
+|------|------|------|------|
+| `question` | string | ✅ | 使用者的問題 |
+| `answer` | string | ✅ | AI 回答 |
+| `rating` | int | ✅ | 1~5 星評分 |
+| `comment` | string? | ❌ | 文字回饋 |
+| `session_id` | string? | ❌ | 外部 App 的 Session ID |
+| `source` | string? | ❌ | 來源（`line_bot` / `web` / `api`） |
+
+**請求範例**：
+```json
+{
+  "question": "台泥的碳中和目標是什麼？",
+  "answer": "根據台泥 2023 年報...",
+  "rating": 5,
+  "comment": "回答很完整",
+  "source": "line_bot"
+}
+```
+
+**回應**：
+```json
+{"status": "ok", "message": "回饋已儲存"}
+```
+
+---
+
 ## 各語言串接範例
 
 ### Python
@@ -343,6 +464,22 @@ curl -X POST https://rag-api-1019292564477.asia-east1.run.app/api/ask \
   -H "X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy" \
   -H "Content-Type: application/json" \
   -d '{"question": "台泥的永續發展策略是什麼？"}'
+
+# 比較問答（SSE）
+curl -X POST https://rag-api-1019292564477.asia-east1.run.app/api/ask/compare \
+  -H "X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "比較碳排強度", "groups": [{"group": "台泥企業團"}, {"group": "亞泥"}]}'
+
+# 文件列表（篩選 2023 年）
+curl "https://rag-api-1019292564477.asia-east1.run.app/api/documents?fiscal_year=2023&limit=20" \
+  -H "X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy"
+
+# 儲存回饋
+curl -X POST https://rag-api-1019292564477.asia-east1.run.app/api/feedback \
+  -H "X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "碳中和目標？", "answer": "2050年...", "rating": 5}'
 ```
 
 ---
