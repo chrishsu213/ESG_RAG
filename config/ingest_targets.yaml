@@ -1,0 +1,51 @@
+# ============================================================
+# 批次入庫設定檔
+# 填好後 push 到 GitHub，去 Actions 頁面手動觸發即可關電腦
+# ============================================================
+
+defaults:
+  language: zh-TW
+  group: 台泥企業團
+  chunk_strategy: parent_child   # flat 或 parent_child
+
+targets:
+
+  # ── 網站 / 爬蟲 ──────────────────────────────────────────
+  # 直接給 URL 清單（每行一個）
+  - type: url_list
+    category: ESG專區
+    fiscal_year: null            # 留 null 不填年度
+    language: zh-TW
+    group: 台泥企業團
+    urls:
+      - https://www.tcc.com.tw/esg/zh-tw
+      # 新增更多 URL 在此...
+
+  # 給 Sitemap XML，自動展開所有子頁
+  - type: sitemap
+    category: 官網
+    fiscal_year: null
+    language: zh-TW
+    group: 台泥企業團
+    url: https://www.tcc.com.tw/sitemap.xml
+    max_pages: 300               # 最多抓幾個頁面（防爆量）
+
+  # 給起始頁，自動遞迴爬取同域連結
+  - type: crawler
+    category: 新聞
+    fiscal_year: null
+    language: zh-TW
+    group: 台泥企業團
+    url: https://www.tcc.com.tw/news/zh-tw
+    max_depth: 2
+    max_pages: 200
+
+  # ── 電子報（獨立 URL 清單）─────────────────────────────
+  - type: url_list
+    category: 電子報
+    fiscal_year: "2024"
+    language: zh-TW
+    group: 台泥企業團
+    urls:
+      - https://www.tcc.com.tw/newsletter/2024-Q1
+      # 依此類推...

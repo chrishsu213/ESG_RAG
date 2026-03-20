@@ -1,0 +1,67 @@
+name: Batch Ingest
+
+on:
+  # 手動觸發：去 GitHub → Actions → Batch Ingest → Run workflow
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run（只列出目標，不實際入庫）'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      config:
+        description: '設定檔路徑'
+        required: false
+        default: 'config/ingest_targets.yaml'
+
+  # 或設定定期排程（取消以下註解即可）
+  # schedule:
+  #   - cron: '0 2 * * 1'   # 每週一凌晨 2 點
+
+jobs:
+  ingest:
+    name: 批次入庫
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 最長跑 6 小時
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up GCP credentials (Vertex AI ADC)
+        run: |
+          echo '${{ secrets.GCP_SERVICE_ACCOUNT }}' > /tmp/gcp_sa.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_sa.json" >> $GITHUB_ENV
+
+      - name: Run batch ingest
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_LOCATION: us-central1
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          python scripts/batch_ingest.py \
+            --config "${{ inputs.config }}" \
+            $DRY_RUN_FLAG
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingest-log-${{ github.run_id }}
+          path: '*.log'
+          if-no-files-found: ignore
