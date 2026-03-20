@@ -26,6 +26,7 @@ class SupabaseExporter:
         report_group: Optional[str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
+        fiscal_period: str = "Annual",
     ) -> int:
         """
         寫入 documents 主表，回傳新建記錄的主鍵 id。
@@ -36,6 +37,7 @@ class SupabaseExporter:
             "source_type": source_type,
             "category": category,
             "display_name": display_name or (file_name.rsplit(".", 1)[0] if "." in file_name else file_name),
+            "fiscal_period": fiscal_period,
         }
         if report_group:
             record["report_group"] = report_group

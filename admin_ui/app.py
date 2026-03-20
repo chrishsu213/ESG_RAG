@@ -244,7 +244,19 @@ elif page == "📤 上傳與匯入":
             key="upload_report_group",
             help="將多個章節歸為同一份報告。整份上傳或非報告可留空。"
         )
-    
+
+    # ── 季度（僅財務報告需要）──────────────────────
+    if upload_category == "財務報告":
+        upload_fiscal_period = st.selectbox(
+            "📅 季度",
+            ["Annual", "Q1", "Q2", "Q3", "Q4"],
+            index=0,
+            key="upload_fiscal_period",
+            help="年報選 Annual；季報請選對應季度"
+        )
+    else:
+        upload_fiscal_period = "Annual"
+
     # ── 集團 / 子公司 ──────────────────────────────
     col_grp, col_comp = st.columns(2)
     with col_grp:
@@ -478,6 +490,7 @@ elif page == "📤 上傳與匯入":
                                 report_group=rg,
                                 group=upload_group if upload_group else None,
                                 company=upload_company if upload_company else None,
+                                fiscal_period=upload_fiscal_period,
                             )
                             p_cnt, c_cnt = exporter.insert_parent_child_chunks(
                                 doc_id, parent_child_list, child_embeddings_map
