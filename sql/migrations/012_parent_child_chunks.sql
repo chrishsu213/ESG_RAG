@@ -145,7 +145,7 @@ DECLARE
 BEGIN
   RETURN QUERY
   WITH
-  -- 向量搜尋（RRF 排名）
+    -- 向量搜尋（RRF 排名）
   vector_search AS (
     SELECT
       c.id,
@@ -159,7 +159,10 @@ BEGIN
       AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
       AND (filter_group       IS NULL OR d."group"     = filter_group)
       AND (filter_company     IS NULL OR d.company     = filter_company)
-    LIMIT match_count * 4
+    -- 🛡️ R5修復：必須補上 statement-level ORDER BY 才能觸發 HNSW Index Scan
+    -- ROW_NUMBER() OVER (ORDER BY ...) 是窗函數，不能觸發索引
+    ORDER BY c.embedding <=> query_embedding
+    LIMIT match_count * 20  -- 🛡️ *4 → *20 防候選池坤嘒
   ),
   -- 全文搜尋（RRF 排名）
   fts_search AS (
@@ -175,7 +178,9 @@ BEGIN
       AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
       AND (filter_group       IS NULL OR d."group"     = filter_group)
       AND (filter_company     IS NULL OR d.company     = filter_company)
-    LIMIT match_count * 4
+    -- 🛡️ R5修復：必須補上 statement-level ORDER BY 才能正確取 Top K
+    ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery('simple', query_text)) DESC
+    LIMIT match_count * 20  -- 🛡️ *4 → *20 防候選池坤嘒
   ),
   -- RRF 融合分數
   rrf_scores AS (

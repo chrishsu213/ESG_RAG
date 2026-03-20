@@ -582,23 +582,30 @@ class RagChat:
 
         def _fetch_group(grp: dict) -> list[dict]:
             grp_label = " / ".join(str(v) for v in grp.values() if v)
-            results = self._retriever.hybrid_search(
-                question,
-                top_k=top_k * 2,
-                language=language,
-                fiscal_year=grp.get("fiscal_year"),
-                group=grp.get("group"),
-                company=grp.get("company"),
-            )
-            if results:
-                results = self._retriever.rerank(question, results, top_k=top_k)
-            for r in results:
-                r["_group_label"] = grp_label
-            return results
+            try:  # 🛡️ R5修復：單一分組失敗不會拖垃整個比較串流
+                results = self._retriever.hybrid_search(
+                    question,
+                    top_k=top_k * 2,
+                    language=language,
+                    fiscal_year=grp.get("fiscal_year"),
+                    group=grp.get("group"),
+                    company=grp.get("company"),
+                )
+                if results:
+                    results = self._retriever.rerank(question, results, top_k=top_k)
+                for r in results:
+                    r["_group_label"] = grp_label
+                return results
+            except Exception as e:
+                logger.error(f"[RAG] 比較模式單點檢索失敗 ({grp_label}): {e}")
+                return []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(groups), 8)) as executor:
             for group_results in executor.map(_fetch_group, groups):
                 all_results.extend(group_results)
+
+        # 🛡️ R5修復：全域相似度降序排序（原版是 A公司區塊 + B公司區塊，送給 AI 的證據缺乏全域最強排序）
+        all_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
 
         # 平行完成後，統一編排 source_idx（避免 Race Condition）
         for r in all_results:

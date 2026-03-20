@@ -139,8 +139,9 @@ class SemanticChunker:
                     if real_length <= child_max_length:
                         current = test_str
                     else:
-                        page_start, page_end = self._extract_page_range(current)
+                        # 🛡️ R5修復：先還原表格，再提取頁碼（原版對佔位符提取，表格內頁碼一定捏不到）
                         restored = self._restore_tables(current, table_map)
+                        page_start, page_end = self._extract_page_range(restored)
                         children.append({
                             "chunk_index": global_child_idx,
                             "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
@@ -154,8 +155,9 @@ class SemanticChunker:
                         current = para
 
             if current:
-                page_start, page_end = self._extract_page_range(current)
+                # 🛡️ R5修復：先還原表格，再提取頁碼
                 restored = self._restore_tables(current, table_map)
+                page_start, page_end = self._extract_page_range(restored)
                 children.append({
                     "chunk_index": global_child_idx,
                     "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
