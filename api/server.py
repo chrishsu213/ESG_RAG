@@ -131,6 +131,49 @@ class AskResponse(BaseModel):
     search_results_count: int
 
 
+class CompareRequest(BaseModel):
+    question: str = Field(..., description="使用者問題")
+    groups: list[dict] = Field(
+        ...,
+        description="比較組別範例：[{\"group\": \"台泰企業團\"}, {\"group\": \"亞泥\"}] 或 [{\"fiscal_year\": \"2023\"}, {\"fiscal_year\": \"2024\"}]",
+        min_length=2,
+        max_length=6,
+    )
+    top_k: int = Field(5, ge=1, le=10, description="每組參考段落數量")
+    language: Optional[str] = Field(None, description="限制搜尋語言")
+    history: Optional[list[dict]] = Field(None, description="對話歷史")
+
+
+class FeedbackRequest(BaseModel):
+    question: str = Field(..., description="使用者的問題")
+    answer: str = Field(..., description="AI 生成的回答")
+    rating: int = Field(..., ge=1, le=5, description="評分 1~5 星")
+    comment: Optional[str] = Field(None, description="文字回饋（可選）")
+    session_id: Optional[str] = Field(None, description="外部 App 的 Session ID（可選）")
+    source: Optional[str] = Field("api", description="來源 App，如 line_bot、web、api")
+
+
+class DocumentItem(BaseModel):
+    id: int
+    file_name: str
+    display_name: Optional[str] = None
+    category: Optional[str] = None
+    report_group: Optional[str] = None
+    group: Optional[str] = None
+    company: Optional[str] = None
+    fiscal_year: Optional[str] = None
+    language: Optional[str] = None
+    source_type: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentItem]
+    count: int
+    total: int
+
+
 class StatsResponse(BaseModel):
     total_documents: int
     total_chunks: int
@@ -150,7 +193,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TCC RAG Knowledge Base API",
     description="ESG/IR 知識庫搜尋與問答 API",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -338,3 +381,106 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/ask/compare")
+def ask_compare(req: CompareRequest, _=Depends(verify_api_key)):
+    """RAG 比較模式：對多個公司或年度做交叉比較，以 SSE 串流回傳。
+
+    - groups 傳入 2~6 組篩選條件，每組分別搜尋後由 AI 全面比較
+    - 事件格式與 /api/ask/stream 相同
+    """
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    client = get_supabase()
+    rag = RagChat(client)
+
+    def event_generator():
+        try:
+            result = rag.ask_compare(
+                question=req.question,
+                groups=req.groups,
+                history=req.history,
+                top_k=req.top_k,
+                language=req.language,
+                source="api_compare",
+            )
+            yield f"data: {_json.dumps({'event': 'sources', 'sources': result['sources'], 'count': len(result['search_results'])}, ensure_ascii=False)}\n\n"
+            for text_chunk in result["stream"]:
+                yield f"data: {_json.dumps({'event': 'token', 'text': text_chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {_json.dumps({'event': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {_json.dumps({'event': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/documents", response_model=DocumentListResponse)
+def list_documents(
+    category: Optional[str] = None,
+    group: Optional[str] = None,
+    company: Optional[str] = None,
+    fiscal_year: Optional[str] = None,
+    source_type: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _=Depends(verify_api_key),
+):
+    """取得知識庫文件列表，支援多維篩選與分頁。
+
+    外部 App 可用此端點建立文件瀏覽器或篩選工具欄。
+    """
+    client = get_supabase()
+    try:
+        query = client.table("documents").select(
+            "id, file_name, display_name, category, report_group, group, company, "
+            "fiscal_year, language, source_type, status, created_at"
+        )
+        if category:
+            query = query.eq("category", category)
+        if group:
+            query = query.eq("group", group)
+        if company:
+            query = query.eq("company", company)
+        if fiscal_year:
+            query = query.eq("fiscal_year", fiscal_year)
+        if source_type:
+            query = query.eq("source_type", source_type)
+
+        all_res = query.execute()
+        total = len(all_res.data or [])
+        paged = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+
+        return DocumentListResponse(
+            documents=[DocumentItem(**d) for d in (paged.data or [])],
+            count=len(paged.data or []),
+            total=total,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/feedback")
+def submit_feedback(req: FeedbackRequest, _=Depends(verify_api_key)):
+    """儲存使用者對問答結果的評分與回饋。
+
+    外部 App 可用此紀錄使用者評分，供後續品質分析用。
+    """
+    client = get_supabase()
+    try:
+        client.table("qa_feedback").insert({
+            "question":   req.question,
+            "answer":     req.answer,
+            "rating":     req.rating,
+            "comment":    req.comment,
+            "session_id": req.session_id,
+            "source":     req.source or "api",
+        }).execute()
+        return {"status": "ok", "message": "回饋已儲存"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
