@@ -8,7 +8,10 @@ modules/pipeline.py — 統一文件入庫 Pipeline
     from modules.pipeline import DocumentIngestionPipeline
 
     pipeline = DocumentIngestionPipeline(supabase_client, gemini_api_key="...")
+    # 傳統平行 chunks
     result = pipeline.ingest("path/to/file.pdf", category="永續報告書")
+    # Parent-Child 模式
+    result = pipeline.ingest("path/to/file.pdf", category="永續報告書", chunk_strategy="parent_child")
 """
 from __future__ import annotations
 
@@ -36,6 +39,8 @@ class IngestionResult:
         success: bool,
         document_id: Optional[int] = None,
         chunks_count: int = 0,
+        parent_count: int = 0,
+        child_count: int = 0,
         has_embeddings: bool = False,
         display_name: str = "",
         message: str = "",
@@ -43,6 +48,8 @@ class IngestionResult:
         self.success = success
         self.document_id = document_id
         self.chunks_count = chunks_count
+        self.parent_count = parent_count
+        self.child_count = child_count
         self.has_embeddings = has_embeddings
         self.display_name = display_name
         self.message = message
@@ -93,6 +100,7 @@ class DocumentIngestionPipeline:
         language: Optional[str] = None,
         do_embed: bool = True,
         page_offset: int = 0,
+        chunk_strategy: str = "flat",  # 'flat' 或 'parent_child'
     ) -> IngestionResult:
         """
         執行完整的入庫 Pipeline。
@@ -149,67 +157,140 @@ class DocumentIngestionPipeline:
 
         # 4) 切割
         self._progress("chunk", "語義切割中...")
-        chunks = SemanticChunker().chunk(cleaned_md)
-
-        if not chunks:
-            return IngestionResult(
-                success=False,
-                message="清洗後無有效內容。",
-            )
-
-        # 套用頁碼偏移
-        if page_offset > 0:
-            for c in chunks:
-                meta = c.get("metadata", {})
-                if meta.get("page_start") is not None:
-                    meta["page_start"] += page_offset
-                if meta.get("page_end") is not None:
-                    meta["page_end"] += page_offset
-
-        # 5) 嵌入
-        embeddings = None
-        if do_embed and self._api_key:
-            self._progress("embed", f"向量嵌入中 ({len(chunks)} 段)...")
-            from modules.embedder import GeminiEmbedder
-
-            embedder = GeminiEmbedder(api_key=self._api_key)
-            texts = [c["text_content"] for c in chunks]
-            embeddings = embedder.embed_batch(texts)
+        chunker = SemanticChunker()
 
         # 6) 寫入 DB
         self._progress("export", "寫入資料庫中...")
         final_name = display_name.strip() if display_name.strip() else file_name
-
         exporter = SupabaseExporter(self._client)
-        doc_id = exporter.insert_document(
-            file_name,
-            doc_info["file_hash"],
-            source_type,
-            category=category,
-            display_name=final_name,
-            report_group=report_group if report_group else None,
-        )
-        exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
 
-        # 更新語言標記
-        if language:
-            try:
-                self._client.table("documents").update(
-                    {"language": language}
-                ).eq("id", doc_id).execute()
-            except Exception:
-                pass
+        if chunk_strategy == "parent_child":
+            # ── Parent-Child 模式 ──────────────────────────
+            parent_child_list = chunker.chunk_parent_child(cleaned_md)
 
-        self._progress("done", f"完成！{final_name} ({len(chunks)} 段)")
+            if not parent_child_list:
+                return IngestionResult(
+                    success=False,
+                    message="清洗後無有效內容。",
+                )
 
-        return IngestionResult(
-            success=True,
-            document_id=doc_id,
-            chunks_count=len(chunks),
-            has_embeddings=embeddings is not None,
-            display_name=final_name,
-            message=f"{len(chunks)} 段 | 📄 {final_name}",
-        )
+            # 套用頁碼偏移
+            if page_offset > 0:
+                for item in parent_child_list:
+                    for chunk in [item["parent"]] + item["children"]:
+                        meta = chunk.get("metadata", {})
+                        if meta.get("page_start") is not None:
+                            meta["page_start"] += page_offset
+                        if meta.get("page_end") is not None:
+                            meta["page_end"] += page_offset
+
+            # 收集 embed 目標（children + standalone）
+            embed_targets: list[tuple[int, str]] = []
+            for item in parent_child_list:
+                if item["children"]:
+                    for child in item["children"]:
+                        embed_targets.append((child["chunk_index"], child["text_content"]))
+                else:
+                    p = item["parent"]
+                    embed_targets.append((p["chunk_index"], p["text_content"]))
+
+            child_embeddings_map: dict[int, list[float]] = {}
+            if do_embed and self._api_key and embed_targets:
+                self._progress("embed", f"向量嵌入中（{len(embed_targets)} 個 children）...")
+                from modules.embedder import GeminiEmbedder
+                embedder = GeminiEmbedder(api_key=self._api_key)
+                texts = [t for _, t in embed_targets]
+                vecs = embedder.embed_batch(texts)
+                for (idx, _), vec in zip(embed_targets, vecs):
+                    child_embeddings_map[idx] = vec
+
+            doc_id = exporter.insert_document(
+                file_name,
+                doc_info["file_hash"],
+                source_type,
+                category=category,
+                display_name=final_name,
+                report_group=report_group if report_group else None,
+            )
+            p_cnt, c_cnt = exporter.insert_parent_child_chunks(
+                doc_id, parent_child_list, child_embeddings_map
+            )
+
+            if language:
+                try:
+                    self._client.table("documents").update(
+                        {"language": language}
+                    ).eq("id", doc_id).execute()
+                except Exception:
+                    pass
+
+            self._progress("done", f"完成！{final_name} ({p_cnt} parents, {c_cnt} children)")
+            return IngestionResult(
+                success=True,
+                document_id=doc_id,
+                chunks_count=p_cnt + c_cnt,
+                parent_count=p_cnt,
+                child_count=c_cnt,
+                has_embeddings=bool(child_embeddings_map),
+                display_name=final_name,
+                message=f"{p_cnt} parents, {c_cnt} children | 📄 {final_name}",
+            )
+
+        else:
+            # ── 傳統平行 chunks 模式 ───────────────────────
+            chunks = chunker.chunk(cleaned_md)
+
+            if not chunks:
+                return IngestionResult(
+                    success=False,
+                    message="清洗後無有效內容。",
+                )
+
+            # 套用頁碼偏移
+            if page_offset > 0:
+                for c in chunks:
+                    meta = c.get("metadata", {})
+                    if meta.get("page_start") is not None:
+                        meta["page_start"] += page_offset
+                    if meta.get("page_end") is not None:
+                        meta["page_end"] += page_offset
+
+            # 5) 嵌入
+            embeddings = None
+            if do_embed and self._api_key:
+                self._progress("embed", f"向量嵌入中 ({len(chunks)} 段)...")
+                from modules.embedder import GeminiEmbedder
+                embedder = GeminiEmbedder(api_key=self._api_key)
+                texts = [c["text_content"] for c in chunks]
+                embeddings = embedder.embed_batch(texts)
+
+            doc_id = exporter.insert_document(
+                file_name,
+                doc_info["file_hash"],
+                source_type,
+                category=category,
+                display_name=final_name,
+                report_group=report_group if report_group else None,
+            )
+            exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+
+            if language:
+                try:
+                    self._client.table("documents").update(
+                        {"language": language}
+                    ).eq("id", doc_id).execute()
+                except Exception:
+                    pass
+
+            self._progress("done", f"完成！{final_name} ({len(chunks)} 段)")
+            return IngestionResult(
+                success=True,
+                document_id=doc_id,
+                chunks_count=len(chunks),
+                has_embeddings=embeddings is not None,
+                display_name=final_name,
+                message=f"{len(chunks)} 段 | 📄 {final_name}",
+            )
 
     @staticmethod
     def guess_category(file_name: str, source_type: str) -> str:

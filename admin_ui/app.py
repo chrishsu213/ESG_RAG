@@ -112,7 +112,7 @@ def fetch_system_stats():
 @st.cache_data(ttl=10)
 def fetch_documents():
     res = (client.table("documents")
-        .select("id, file_name, file_hash, source_type, category, display_name, report_group, \"group\", company, language, status, confidentiality, fiscal_year, tags, created_at")
+        .select("id, file_name, file_hash, source_type, category, display_name, report_group, \"group\", company, language, status, confidentiality, fiscal_year, fiscal_period, tags, created_at")
         .order("created_at", desc=True)
         .execute()
     )
@@ -918,7 +918,7 @@ elif page == "🗃️ 文件管理":
         for col, default in [("category", "其他"), ("display_name", None), ("report_group", None),
                              ("group", None), ("company", None),
                              ("language", "zh-TW"), ("status", "已發布"), ("confidentiality", "公開"),
-                             ("fiscal_year", None), ("tags", None)]:
+                             ("fiscal_year", None), ("fiscal_period", "Annual"), ("tags", None)]:
             if col not in df.columns:
                 df[col] = default
         df["display_name"] = df["display_name"].fillna(df["file_name"])
@@ -929,6 +929,7 @@ elif page == "🗃️ 文件管理":
         df["status"] = df["status"].fillna("已發布")
         df["confidentiality"] = df["confidentiality"].fillna("公開")
         df["fiscal_year"] = df["fiscal_year"].fillna("")
+        df["fiscal_period"] = df["fiscal_period"].fillna("Annual")
         
         # ── 篩選列 ──────────────────────────
         f_col1, f_col2 = st.columns(2)
@@ -957,9 +958,10 @@ elif page == "🗃️ 文件管理":
             with st.expander(f"📂 {cat}（{len(cat_df)} 份）", expanded=False):
                 # 使用 data_editor 實現 inline 編輯
                 edit_df = cat_df[["id", "display_name", "category", "group", "company", "report_group",
-                                  "language", "status", "confidentiality", "fiscal_year",
+                                  "language", "status", "confidentiality",
+                                  "fiscal_year", "fiscal_period",
                                   "source_type", "created_at"]].copy()
-                
+
                 edited = st.data_editor(
                     edit_df,
                     column_config={
@@ -973,6 +975,7 @@ elif page == "🗃️ 文件管理":
                         "status": st.column_config.SelectboxColumn("狀態", options=STATUS_OPTIONS, width="small"),
                         "confidentiality": st.column_config.SelectboxColumn("機密", options=CONFIDENTIALITY_OPTIONS, width="small"),
                         "fiscal_year": st.column_config.TextColumn("年度", width="small"),
+                        "fiscal_period": st.column_config.SelectboxColumn("季度", options=["Annual","Q1","Q2","Q3","Q4"], width="small"),
                         "source_type": st.column_config.TextColumn("格式", disabled=True, width="small"),
                         "created_at": st.column_config.TextColumn("入庫時間", disabled=True, width="medium"),
                     },
@@ -981,78 +984,113 @@ elif page == "🗃️ 文件管理":
                     num_rows="fixed",
                     key=f"editor_{cat}",
                 )
-                
-                # 偵測變更並儲存
-                col_save, col_del = st.columns([1, 1])
-                
-                with col_save:
-                    if st.button(f"💾 儲存 {cat} 的修改", key=f"save_{cat}"):
-                        changes = 0
-                        editable_cols = ["display_name", "category", "group", "company", "report_group",
-                                         "language", "status", "confidentiality", "fiscal_year"]
-                        for idx, row in edited.iterrows():
-                            orig = edit_df[edit_df["id"] == row["id"]]
-                            if orig.empty:
-                                continue
-                            orig_row = orig.iloc[0]
-                            updates = {}
-                            for col in editable_cols:
-                                new_val = row[col]
-                                old_val = orig_row[col]
-                                if str(new_val) != str(old_val):
-                                    updates[col] = new_val if new_val else None
-                            if updates:
-                                client.table("documents").update(updates).eq("id", row["id"]).execute()
-                                changes += 1
-                        if changes:
-                            fetch_documents.clear()
-                            st.toast(f"✅ 已更新 {changes} 份文件")
-                            st.rerun()
-                        else:
-                            st.toast("沒有偵測到修改")
-                
-                with col_del:
-                    delete_ids = st.multiselect(
-                        "選擇要刪除的文件",
-                        options=cat_df["id"].tolist(),
-                        format_func=lambda x: f"ID {x} — {cat_df[cat_df['id']==x]['display_name'].values[0]}",
-                        key=f"del_{cat}",
-                    )
-                    if delete_ids and st.button(f"🗑️ 刪除 {len(delete_ids)} 份", key=f"del_confirm_{cat}"):
-                        for doc_id in delete_ids:
-                            fname = cat_df[cat_df["id"] == doc_id]["file_name"].values[0]
-                            delete_document(doc_id, fname)
+
+                if st.button(f"💾 儲存 {cat} 的修改", key=f"save_{cat}"):
+                    changes = 0
+                    editable_cols = ["display_name", "category", "group", "company", "report_group",
+                                     "language", "status", "confidentiality", "fiscal_year", "fiscal_period"]
+                    for _, row in edited.iterrows():
+                        orig = edit_df[edit_df["id"] == row["id"]]
+                        if orig.empty:
+                            continue
+                        orig_row = orig.iloc[0]
+                        updates = {}
+                        for col in editable_cols:
+                            new_val = row[col]
+                            old_val = orig_row[col]
+                            if str(new_val) != str(old_val):
+                                updates[col] = new_val if new_val else None
+                        if updates:
+                            client.table("documents").update(updates).eq("id", row["id"]).execute()
+                            changes += 1
+                    if changes:
+                        fetch_documents.clear()
+                        st.toast(f"✅ 已更新 {changes} 份文件")
                         st.rerun()
-        
-        # ── Chunk 預覽 ────────────────────────────
-        st.divider()
-        st.markdown("#### 📖 檢視文件 Chunk 內容")
-        preview_id = st.selectbox(
-            "選擇文件",
-            options=df["id"].tolist(),
-            format_func=lambda x: f"ID {x} — {df[df['id']==x]['display_name'].values[0]}",
-            key="preview_select"
-        )
-        if st.button("載入 Chunk", key="load_chunks"):
-            chunks = fetch_chunks_for_document(preview_id)
-            if not chunks:
-                st.info("此文件沒有 Chunk 資料。")
-            else:
-                preview_name = df[df["id"] == preview_id]["display_name"].values[0]
-                st.markdown(f"**{preview_name}** — 共 {len(chunks)} 個 Chunk")
-                for chunk in chunks:
-                    idx = chunk["chunk_index"]
-                    meta = chunk.get("metadata") or {}
-                    title = meta.get("section_title", "")
-                    ps = meta.get("page_start")
-                    pe = meta.get("page_end")
-                    label = f"Chunk #{idx}"
-                    if title:
-                        label += f" | 🔖 {title}"
-                    if ps:
-                        label += f" | 📄 第{ps}{f'-{pe}' if pe and pe != ps else ''}頁"
-                    with st.expander(label, expanded=False):
-                        st.markdown(chunk["text_content"])
+                    else:
+                        st.toast("沒有偵測到修改")
+
+                st.divider()
+                st.caption("📄 點擊 📖 查看 Chunk，點擊 🗑️ 刪除文件")
+
+                # ── 每份文件一列，附 View / Delete 按鈕 ──
+                for _, row in cat_df.iterrows():
+                    doc_id   = int(row["id"])
+                    doc_name = row["display_name"]
+                    year     = str(row.get("fiscal_year", "") or "")
+                    period   = str(row.get("fiscal_period", "Annual") or "Annual")
+                    company  = str(row.get("company", "") or "")
+
+                    r_name, r_view, r_del = st.columns([7, 1, 1])
+                    with r_name:
+                        badges = ""
+                        if year:
+                            badges += f" `{year}`"
+                        if period and period != "Annual":
+                            badges += f" `{period}`"
+                        if company:
+                            badges += f" • {company}"
+                        st.markdown(f"**{doc_name}**{badges}")
+
+                    with r_view:
+                        if st.button("📖", key=f"view_{doc_id}", help="查看 Chunk 內容"):
+                            if st.session_state.get("preview_doc_id") == doc_id:
+                                st.session_state.pop("preview_doc_id", None)
+                            else:
+                                st.session_state["preview_doc_id"] = doc_id
+                                st.session_state.pop("confirm_del_id", None)
+                            st.rerun()
+
+                    with r_del:
+                        if st.button("🗑️", key=f"del_{doc_id}", help="刪除這份文件"):
+                            if st.session_state.get("confirm_del_id") == doc_id:
+                                st.session_state.pop("confirm_del_id", None)
+                            else:
+                                st.session_state["confirm_del_id"] = doc_id
+                                st.session_state.pop("preview_doc_id", None)
+                            st.rerun()
+
+                    # 刪除確認小視窗
+                    if st.session_state.get("confirm_del_id") == doc_id:
+                        with st.container(border=True):
+                            st.warning(f"確定要刪除「**{doc_name}**」及所有 Chunks？")
+                            cd1, cd2 = st.columns(2)
+                            with cd1:
+                                if st.button("✅ 確認刪除", key=f"del_yes_{doc_id}", type="primary"):
+                                    delete_document(doc_id, row["file_name"])
+                                    st.session_state.pop("confirm_del_id", None)
+                                    fetch_documents.clear()
+                                    st.rerun()
+                            with cd2:
+                                if st.button("❌ 取消", key=f"del_no_{doc_id}"):
+                                    st.session_state.pop("confirm_del_id", None)
+                                    st.rerun()
+
+                    # Chunk 預覽（點擊 📖 後顯示）
+                    if st.session_state.get("preview_doc_id") == doc_id:
+                        with st.container(border=True):
+                            st.markdown(f"📖 **{doc_name}** 的 Chunk 內容")
+                            chunks_data = fetch_chunks_for_document(doc_id)
+                            if not chunks_data:
+                                st.info("此文件沒有 Chunk 資料。")
+                            else:
+                                st.caption(f"共 {len(chunks_data)} 個 Chunk")
+                                for chunk in chunks_data:
+                                    idx   = chunk["chunk_index"]
+                                    meta  = chunk.get("metadata") or {}
+                                    title = meta.get("section_title", "")
+                                    ps    = meta.get("page_start")
+                                    pe    = meta.get("page_end")
+                                    label = f"Chunk #{idx}"
+                                    if title:
+                                        label += f" | 🔖 {title}"
+                                    if ps:
+                                        label += f" | 📄 第{ps}{f'-{pe}' if pe and pe != ps else ''}頁"
+                                    with st.expander(label, expanded=False):
+                                        st.markdown(chunk["text_content"])
+                            if st.button("✖️ 關閉預覽", key=f"close_preview_{doc_id}"):
+                                st.session_state.pop("preview_doc_id", None)
+                                st.rerun()
 
 # ══════════════════════════════════════════════════════
 # 頁面：檢索測試
