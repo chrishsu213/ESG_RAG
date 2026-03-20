@@ -20,7 +20,10 @@ from modules.parser_pdf_vision import VisionPdfParser
 from modules.proofreader import AiProofreader
 from modules.parser_audio import AudioParser
 from modules.embedder import GeminiEmbedder
-from admin_ui.utils.constants import CATEGORY_OPTIONS
+from admin_ui.utils.constants import (
+    CATEGORY_GROUPS, CATEGORY_WITH_QUARTER, CATEGORY_WITH_PUBLISH_DATE,
+    LANGUAGE_OPTIONS, FISCAL_YEAR_OPTIONS,
+)
 
 # 暫存目錄（絕對路徑，避免 CWD 依賴）
 _BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +34,8 @@ _RAW_DATA_DIR = os.path.join(_BASE_DIR, "raw_data")
 # 共用 helper：處理 URL pipeline
 # ──────────────────────────────────────────────────────────
 def _process_url(client, url: str, category: str, display_name: str,
-                 report_group: str = "", group: str = "", company: str = ""):
+                 report_group: str = "", group: str = "", company: str = "",
+                 fiscal_year: str = "", language: str = "", publish_date: str = ""):
     """處理 URL 的完整 Pipeline（解析 → 清洗 → 切割 → 嵌入 → 入庫）"""
     uploader = Uploader(client)
     doc_info = uploader.process(url)
@@ -59,6 +63,9 @@ def _process_url(client, url: str, category: str, display_name: str,
         report_group=report_group if report_group.strip() else None,
         group=group if group.strip() else None,
         company=company if company.strip() else None,
+        fiscal_year=fiscal_year if fiscal_year else None,
+        language=language if language else None,
+        publish_date=publish_date if publish_date else None,
     )
     exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
     return True, f"{len(chunks)} 段 | 📄 {final_name}"
@@ -70,26 +77,63 @@ def _process_url(client, url: str, category: str, display_name: str,
 def render(client):
     st.title("📤 上傳與匯入")
 
-    # ── 共用欄位 ──────────────────────────────────────────
-    col_cat, col_name, col_rg = st.columns(3)
+    # ── 第一行：類別群組 → 細分類 ─────────────────────────
+    col_grp_sel, col_cat = st.columns(2)
+    with col_grp_sel:
+        group_label = st.selectbox(
+            "📂 類別群組",
+            list(CATEGORY_GROUPS.keys()),
+            key="upload_group_label",
+        )
     with col_cat:
-        upload_category = st.selectbox("📁 文件分類", CATEGORY_OPTIONS, index=4, key="upload_category")
+        upload_category = st.selectbox(
+            "📁 文件分類",
+            CATEGORY_GROUPS[group_label],
+            key="upload_category",
+        )
+
+    # ── 第二行：顯示名稱 + 所屬報告 ───────────────────────
+    col_name, col_rg = st.columns(2)
     with col_name:
-        upload_display_name = st.text_input("📝 自訂顯示名稱（留空用檔名）", key="upload_display_name")
+        upload_display_name = st.text_input(
+            "📝 自訂顯示名稱（留空用檔名）", key="upload_display_name"
+        )
     with col_rg:
         upload_report_group = st.text_input(
             "📎 所屬報告（拆章節用）", placeholder="例如：2024永續報告書",
-            key="upload_report_group", help="將多個章節歸為同一份報告。整份上傳或非報告可留空。"
+            key="upload_report_group",
+            help="將多個章節歸為同一份報告。整份上傳或非報告可留空。",
         )
 
-    # ── 季度（僅財務報告）────────────────────────────────
-    if upload_category == "財務報告":
+    # ── 第三行：年度 + 語言 ────────────────────────────────
+    col_year, col_lang = st.columns(2)
+    with col_year:
+        _year_options = ["（不填）"] + FISCAL_YEAR_OPTIONS
+        _year_sel = st.selectbox("📅 年度", _year_options, index=0, key="upload_fiscal_year")
+        upload_fiscal_year = "" if _year_sel == "（不填）" else _year_sel
+    with col_lang:
+        _lang_options = ["（不填）"] + LANGUAGE_OPTIONS
+        _lang_sel = st.selectbox("🌐 語言", _lang_options, index=1, key="upload_language")
+        upload_language = "" if _lang_sel == "（不填）" else _lang_sel
+
+    # ── 條件顯示：季度（財務報告 / 法說會） ───────────────
+    if upload_category in CATEGORY_WITH_QUARTER:
         upload_fiscal_period = st.selectbox(
-            "📅 季度", ["Annual", "Q1", "Q2", "Q3", "Q4"], index=0,
-            key="upload_fiscal_period", help="年報選 Annual；季報請選對應季度"
+            "📊 季度", ["Annual", "Q1", "Q2", "Q3", "Q4"], index=0,
+            key="upload_fiscal_period",
+            help="年報 / 全年度選 Annual；季報請選對應季度",
         )
     else:
         upload_fiscal_period = "Annual"
+
+    # ── 條件顯示：發布日期（新聞稿 / 電子報） ─────────────
+    upload_publish_date = ""
+    if upload_category in CATEGORY_WITH_PUBLISH_DATE:
+        _pub_date = st.date_input(
+            "📰 發布日期", value=None, key="upload_publish_date",
+            help="記錄新聞稿或電子報的發布日期，供 AI 引用時精準標注",
+        )
+        upload_publish_date = _pub_date.isoformat() if _pub_date else ""
 
     # ── 集團 / 子公司 ──────────────────────────────────────
     col_grp, col_comp = st.columns(2)
@@ -118,9 +162,6 @@ def render(client):
     # ── 三個子分頁 ─────────────────────────────────────────
     sub_tab1, sub_tab2, sub_tab3 = st.tabs(["📂 PDF / Word 文件", "🌐 網頁爬蟲", "🎙️ 錄音檔（開發中）"])
 
-    # ─────────────────────────────────────────────
-    # 子分頁 1：PDF / Word
-    # ─────────────────────────────────────────────
     with sub_tab1:
         upload_mode = st.radio(
             "上傳模式",
@@ -128,24 +169,20 @@ def render(client):
             format_func=lambda x: {"single": "📄 單檔模式（可預覽編輯）", "batch": "📦 批次模式（多檔自動處理）"}[x],
             horizontal=True, key="upload_mode",
         )
-
         if upload_mode == "single":
             _render_single_upload(client, upload_category, upload_display_name, upload_report_group,
-                                  upload_group, upload_company, upload_fiscal_period)
+                                  upload_group, upload_company, upload_fiscal_period,
+                                  upload_fiscal_year, upload_language, upload_publish_date)
         else:
             _render_batch_upload(client, upload_category, upload_display_name, upload_report_group,
-                                 upload_group, upload_company)
+                                 upload_group, upload_company,
+                                 upload_fiscal_year, upload_language, upload_publish_date)
 
-    # ─────────────────────────────────────────────
-    # 子分頁 2：網頁爬蟲
-    # ─────────────────────────────────────────────
     with sub_tab2:
         _render_web_crawler(client, upload_category, upload_display_name,
-                            upload_report_group, upload_group, upload_company)
+                            upload_report_group, upload_group, upload_company,
+                            upload_fiscal_year, upload_language, upload_publish_date)
 
-    # ─────────────────────────────────────────────
-    # 子分頁 3：錄音檔
-    # ─────────────────────────────────────────────
     with sub_tab3:
         _render_audio_upload(client, upload_category, upload_display_name)
 
@@ -154,7 +191,8 @@ def render(client):
 # 私用 ─ 單檔 PDF/DOCX 入庫
 # ──────────────────────────────────────────────────────────
 def _render_single_upload(client, category, display_name, report_group,
-                          group, company, fiscal_period):
+                          group, company, fiscal_period,
+                          fiscal_year="", language="", publish_date=""):
     uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"], key="single_uploader")
 
     pdf_mode    = "vision_pdf"  # 固定使用最高品質模式
@@ -304,7 +342,8 @@ def _render_single_upload(client, category, display_name, report_group,
 # ──────────────────────────────────────────────────────────
 # 私用 ─ 批次 PDF/DOCX 入庫
 # ──────────────────────────────────────────────────────────
-def _render_batch_upload(client, category, display_name, report_group, group, company):
+def _render_batch_upload(client, category, display_name, report_group, group, company,
+                         fiscal_year="", language="", publish_date=""):
     st.info("📦 批次模式：一次上傳多個 PDF / DOCX 檔案，系統將自動依序處理。")
 
     batch_pdf_mode = "vision_pdf"  # 固定使用最高品質模式
@@ -351,6 +390,9 @@ def _render_batch_upload(client, category, display_name, report_group, group, co
                     bf.name, doc_info["file_hash"], doc_info["source_type"],
                     category=category, display_name=doc_display, report_group=rg,
                     group=group if group else None, company=company if company else None,
+                    fiscal_year=fiscal_year if fiscal_year else None,
+                    language=language if language else None,
+                    publish_date=publish_date if publish_date else None,
                 )
                 exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
                 success_count += 1
@@ -374,7 +416,8 @@ def _render_batch_upload(client, category, display_name, report_group, group, co
 # ──────────────────────────────────────────────────────────
 # 私用 ─ 網頁爬蟲
 # ──────────────────────────────────────────────────────────
-def _render_web_crawler(client, category, display_name, report_group, group, company):
+def _render_web_crawler(client, category, display_name, report_group, group, company,
+                        fiscal_year="", language="", publish_date=""):
     web_mode = st.radio(
         "匯入方式",
         ["single", "sitemap", "crawler"],
@@ -387,7 +430,8 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
         if url_input and st.button("開始抓取", type="primary", key="fetch_url"):
             with st.spinner("正在抓取..."):
                 try:
-                    ok, msg = _process_url(client, url_input, category, display_name, report_group, group, company)
+                    ok, msg = _process_url(client, url_input, category, display_name, report_group, group, company,
+                                          fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                     if ok:
                         st.success(f"✅ 入庫成功：{msg}")
                     else:

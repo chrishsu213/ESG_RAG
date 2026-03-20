@@ -27,9 +27,18 @@ class SupabaseExporter:
         group: Optional[str] = None,
         company: Optional[str] = None,
         fiscal_period: str = "Annual",
+        fiscal_year: Optional[str] = None,
+        language: Optional[str] = None,
+        publish_date: Optional[str] = None,
     ) -> int:
         """
         寫入 documents 主表，回傳新建記錄的主鍵 id。
+
+        Parameters
+        ----------
+        fiscal_year   : 年度（如 "2024"）
+        language      : 語言（如 "zh-TW"）
+        publish_date  : 發布日期（新聞稿/電子報用，格式 "YYYY-MM-DD"）
         """
         record = {
             "file_name": file_name,
@@ -45,6 +54,12 @@ class SupabaseExporter:
             record["group"] = group
         if company:
             record["company"] = company
+        if fiscal_year:
+            record["fiscal_year"] = fiscal_year
+        if language:
+            record["language"] = language
+        if publish_date:
+            record["publish_date"] = publish_date
         result = (
             self._client.table("documents")
             .insert(record)
