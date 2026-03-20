@@ -151,11 +151,22 @@ class SiteCrawler:
                     resp.close()  # 非 HTML（影片/PDF/ZIP）直接關閉，不讀內容
                     continue
 
-                # 確認是 HTML 後才讀取內容
-                html_bytes = resp.content
+                # 🛡️ OOM 修復：改用 iter_content 邊讀邊算，超過 10MB 直接截斷
+                # 原本 resp.content 會把整個 Response 一口氣載入 RAM，
+                # 惡意伺服器回傳超大 HTML 仍可能 OOM 崩潰。
+                _MAX_HTML_BYTES = 10 * 1024 * 1024  # 10 MB
+                html_chunks_buf = []
+                downloaded = 0
+                for _chunk in resp.iter_content(chunk_size=8192):
+                    html_chunks_buf.append(_chunk)
+                    downloaded += len(_chunk)
+                    if downloaded > _MAX_HTML_BYTES:
+                        break  # 超過上限，截斷（不中斷爬蟲，仍取已下載部分）
                 resp.close()
+                html_bytes = b"".join(html_chunks_buf)
                 encoding = resp.encoding or resp.apparent_encoding or "utf-8"
                 html_text = html_bytes.decode(encoding, errors="replace")
+
 
             except Exception:
                 continue

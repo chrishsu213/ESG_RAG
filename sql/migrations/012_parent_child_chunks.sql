@@ -36,7 +36,7 @@ RETURNS TABLE (
   id              BIGINT,
   document_id     BIGINT,
   chunk_index     INT,
-  text_content    TEXT,    -- parent 的 text（若為 child），否則自己的
+  text_content    TEXT,
   similarity      FLOAT,
   metadata        JSONB,
   file_name       TEXT,
@@ -56,47 +56,55 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   RETURN QUERY
-  -- 🛡️ Bug Fix: CTE 包裙 DISTINCT ON 去重，再在外層依相似度全域排序
-  -- 原則: DISTINCT ON 的 ORDER BY 必須對齠 pivot key 排序，導致 LIMIT 會按 chunk_id 拏點舊檔
-  WITH deduped_results AS (
-    SELECT DISTINCT ON (COALESCE(c.parent_chunk_id, c.id))
-      c.id,
-      c.document_id,
-      c.chunk_index,
-      COALESCE(p.text_content, c.text_content)          AS text_content,
-      1 - (c.embedding <=> query_embedding)              AS similarity,
-      COALESCE(p.metadata, c.metadata)                   AS metadata,
-      d.file_name,
-      d.display_name,
-      d.category,
-      d.report_group,
-      d."group",
-      d.company,
-      d.fiscal_year,
-      d.language,
-      d.source_type,
-      'vector'::TEXT                                     AS search_type,
-      c.chunk_type,
-      c.parent_chunk_id
+  -- 🛡️ HNSW 修復：雙層 CTE
+  -- 問題：DISTINCT ON 的 ORDER BY 必須 match DISTINCT ON key，
+  --       這讓第一層 ORDER BY 變成 COALESCE(parent_chunk_id, id)，
+  --       pgvector 因此放棄 HNSW Index，退化為全表 Sequential Scan。
+  -- 解法：Layer 1 嚴格遵守 ORDER BY embedding <=> LIMIT 觸發 HNSW；
+  --       Layer 2 只對小候選池做 DISTINCT ON，開銷可忽略不計。
+
+  -- Layer 1：觸發 HNSW Index Scan，先撈 N*5 倍候選集
+  WITH top_matches AS (
+    SELECT
+      c.id, c.document_id, c.chunk_index, c.text_content, c.embedding,
+      c.metadata, c.chunk_type, c.parent_chunk_id,
+      d.file_name, d.display_name, d.category, d.report_group,
+      d."group", d.company, d.fiscal_year, d.language, d.source_type
     FROM document_chunks c
     JOIN documents d ON c.document_id = d.id
-    LEFT JOIN document_chunks p ON c.parent_chunk_id = p.id
     WHERE
       c.chunk_type IN ('child', 'standalone')
-      AND (1 - (c.embedding <=> query_embedding)) >= match_threshold
-      AND (filter_language   IS NULL OR d.language    = filter_language)
+      AND (filter_language    IS NULL OR d.language    = filter_language)
       AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
-      AND (filter_group      IS NULL OR d."group"     = filter_group)
-      AND (filter_company    IS NULL OR d.company     = filter_company)
-    -- DISTINCT ON: 先以 group key 排序，再取每組最高分
-    ORDER BY COALESCE(c.parent_chunk_id, c.id), (1 - (c.embedding <=> query_embedding)) DESC
+      AND (filter_group       IS NULL OR d."group"     = filter_group)
+      AND (filter_company     IS NULL OR d.company     = filter_company)
+    -- 嚴格遵循 HNSW Index 觸發語法：ORDER BY <=> LIMIT
+    ORDER BY c.embedding <=> query_embedding
+    LIMIT match_count * 5
+  ),
+  -- Layer 2：對小候選池做 Parent-Child 替換 + 相似度篩選 + DISTINCT ON 去重
+  deduped_results AS (
+    SELECT DISTINCT ON (COALESCE(t.parent_chunk_id, t.id))
+      t.id, t.document_id, t.chunk_index,
+      COALESCE(p.text_content, t.text_content)         AS text_content,
+      1 - (t.embedding <=> query_embedding)            AS similarity,
+      COALESCE(p.metadata, t.metadata)                 AS metadata,
+      t.file_name, t.display_name, t.category, t.report_group,
+      t."group", t.company, t.fiscal_year, t.language, t.source_type,
+      'vector'::TEXT                                   AS search_type,
+      t.chunk_type, t.parent_chunk_id
+    FROM top_matches t
+    LEFT JOIN document_chunks p ON t.parent_chunk_id = p.id
+    WHERE (1 - (t.embedding <=> query_embedding)) >= match_threshold
+    ORDER BY COALESCE(t.parent_chunk_id, t.id), (1 - (t.embedding <=> query_embedding)) DESC
   )
-  -- 🛡️ 外層全域排序：確保回傳結果按相似度從高到低
+  -- Layer 3：對去重後的小集合做全域相似度排序
   SELECT * FROM deduped_results
   ORDER BY similarity DESC
   LIMIT match_count;
 END;
 $$;
+
 
 -- 5. 更新 match_chunks_hybrid RPC（同樣邏輯）
 DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,text,text,text,text);

@@ -8,10 +8,35 @@ admin_ui/app.py — RAG 知識庫管理介面（Router）
 """
 import os
 import sys
+import time as _time
 
 # 確保能 import 根目錄的 modules 與 config
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
+
+
+def _cleanup_temp_files() -> None:
+    """🛡️ 清理幽靈暫存檔：刪除 raw_data/ 中超過 24 小時的孤兒暫存檔。
+
+    問題：單檔上傳後若使用者關閉分頁而未確認入庫，temp_path 會永久遺留。
+    Cloud Run 的 /tmp 是 RAM-backed，洩漏等同記憶體洩漏。
+    此函式在每次有人開啟 Admin UI 時自動執行清理。
+    """
+    raw_dir = os.path.join(BASE_DIR, "raw_data")
+    if not os.path.isdir(raw_dir):
+        return
+    cutoff = _time.time() - 86400  # 24 小時
+    for fname in os.listdir(raw_dir):
+        fpath = os.path.join(raw_dir, fname)
+        if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+
+
+_cleanup_temp_files()
+
 
 import streamlit as st
 from supabase import create_client

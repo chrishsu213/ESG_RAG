@@ -184,9 +184,18 @@ class StatsResponse(BaseModel):
 # ── FastAPI App ──────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """啟動時檢查必要設定。"""
+    """啟動時檢查必要設定，並優化底層執行緒池。"""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 未設定")
+
+    # 🛡️ 效能修復：擴大 AnyIO 執行緒池上限（預設 40）
+    # 問題：同步 StreamingResponse 的 generator 會佔用 Worker Thread。
+    # 若 40 個用戶同時 SSE 問答（每次 5~15 秒），第 41 個請求（含 /health）
+    # 會被卡死，導致 Cloud Run Load Balancer 判定服務掛掉。
+    import anyio.to_thread
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = 200  # 撐開至 200 個長連線並發
+
     yield
 
 

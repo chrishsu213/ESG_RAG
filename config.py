@@ -141,8 +141,13 @@ def _setup_streamlit_adc() -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=2)
 def get_genai_client(api_key: str | None = None):
     """建立 genai.Client，使用 Vertex AI（ADC 認證）。
+
+    🛡️ 效能修復：lru_cache 確保全域共享同一個 Client 實例。
+    無快取時每次 RAG 呼叫都會建立新的 HTTPX Session 和 TCP/SSL 連線，
+    完全抵消 Connection Pooling 效益，高併發下會耗盡 Cloud Run Sockets。
 
     Cloud Run：自動使用 compute service account。
     Streamlit Cloud：從 secrets 讀取 service account JSON。
