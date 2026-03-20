@@ -423,34 +423,49 @@ elif page == "📤 上傳與匯入":
                         st.warning("⚠️ 此文件已存在於資料庫中。")
                         progress.empty()
                     else:
-                        progress.progress(30, text="切割中...")
-                        chunks = SemanticChunker().chunk(edited_md)
-                        
-                        # 套用頁碼偏移
+                        progress.progress(30, text="切割中（Parent-Child）...")
+                        chunker = SemanticChunker()
+                        parent_child_list = chunker.chunk_parent_child(edited_md)
+
+                        # 套用頁碼偏移（套用到所有 children 和 parents）
                         offset = st.session_state.get("draft_page_offset", 0)
                         if offset > 0:
-                            for c in chunks:
-                                meta = c.get("metadata", {})
-                                if meta.get("page_start") is not None:
-                                    meta["page_start"] += offset
-                                if meta.get("page_end") is not None:
-                                    meta["page_end"] += offset
-                        
-                        embeddings = None
-                        if chunks:
-                            progress.progress(50, text=f"向量嵌入中 ({len(chunks)} 段)...")
+                            for item in parent_child_list:
+                                for chunk in [item["parent"]] + item["children"]:
+                                    meta = chunk.get("metadata", {})
+                                    if meta.get("page_start") is not None:
+                                        meta["page_start"] += offset
+                                    if meta.get("page_end") is not None:
+                                        meta["page_end"] += offset
+
+                        # 收集所有需要 embedding 的 texts（children + standalone）
+                        embed_targets: list[tuple[int, str]] = []
+                        for item in parent_child_list:
+                            if item["children"]:
+                                for child in item["children"]:
+                                    embed_targets.append((child["chunk_index"], child["text_content"]))
+                            else:
+                                # standalone：用 parent 的 chunk_index
+                                p = item["parent"]
+                                embed_targets.append((p["chunk_index"], p["text_content"]))
+
+                        total_embeds = len(embed_targets)
+                        child_embeddings_map: dict[int, list[float]] = {}
+                        if embed_targets:
+                            progress.progress(50, text=f"向量嵌入中（{total_embeds} 個 Children）...")
                             embedder = GeminiEmbedder()
-                            texts = [c["text_content"] for c in chunks]
+                            texts = [t for _, t in embed_targets]
                             try:
-                                embeddings = embedder.embed_batch(texts)
+                                vecs = embedder.embed_batch(texts)
+                                for (idx, _), vec in zip(embed_targets, vecs):
+                                    child_embeddings_map[idx] = vec
                             except Exception as e:
                                 st.error(f"向量產生失敗：{e}")
                                 progress.empty()
-                        
-                        if chunks:
+
+                        if parent_child_list:
                             progress.progress(80, text="寫入資料庫...")
                             exporter = SupabaseExporter(client)
-                            # 使用原始中文檔名（而非 uuid 暫存檔名）
                             original_filename = st.session_state.get("draft_filename", doc_info["file_name"])
                             final_name = upload_display_name.strip() if upload_display_name.strip() else os.path.splitext(original_filename)[0]
                             rg = upload_report_group.strip() if upload_report_group.strip() else None
@@ -464,12 +479,14 @@ elif page == "📤 上傳與匯入":
                                 group=upload_group if upload_group else None,
                                 company=upload_company if upload_company else None,
                             )
-                            exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
-                            
+                            p_cnt, c_cnt = exporter.insert_parent_child_chunks(
+                                doc_id, parent_child_list, child_embeddings_map
+                            )
+
                             progress.progress(100, text="完成！")
                             group_info = f" [報告: {rg}]" if rg else ""
-                            st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({len(chunks)} 段)")
-                            
+                            st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({p_cnt} parents, {c_cnt} children)")
+
                             # 清理磁碟上的暫存檔
                             draft_path = st.session_state.get("draft_path")
                             if draft_path and os.path.exists(draft_path):

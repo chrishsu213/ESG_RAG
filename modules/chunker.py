@@ -72,6 +72,88 @@ class SemanticChunker:
 
         return chunks
 
+    def chunk_parent_child(
+        self,
+        markdown: str,
+        child_max_length: int = 400,
+    ) -> list[dict[str, Any]]:
+        """
+        Parent-Child 切割：
+        - Parent = 現有 chunk() 邏輯切出的大段（≤ MAX_CHUNK_LENGTH）
+        - Child  = Parent 內再依段落切細（≤ child_max_length）
+
+        Returns
+        -------
+        list of {
+            "parent": { chunk_index, text_content, metadata },
+            "children": [ { chunk_index, text_content, metadata }, ... ]
+        }
+        """
+        # 先用現有邏輯切出 Parent chunks
+        parents = self.chunk(markdown)
+
+        result = []
+        global_child_idx = 0
+
+        for p_idx, parent in enumerate(parents):
+            parent_text = parent["text_content"]
+            parent_meta = parent["metadata"]
+
+            # 將 parent 切成 children（依雙換行段落邊界）
+            paragraphs = [p.strip() for p in re.split(r"\n\s*\n", parent_text) if p.strip()]
+
+            children: list[dict[str, Any]] = []
+            current = ""
+
+            for para in paragraphs:
+                if not current:
+                    current = para
+                elif len(current) + len(para) + 2 <= child_max_length:
+                    current += "\n\n" + para
+                else:
+                    # 存下目前累積的 child
+                    page_start, page_end = self._extract_page_range(current)
+                    children.append({
+                        "chunk_index": global_child_idx,
+                        "text_content": current,
+                        "metadata": {
+                            **parent_meta,
+                            "page_start": page_start or parent_meta.get("page_start"),
+                            "page_end": page_end or parent_meta.get("page_end"),
+                        },
+                    })
+                    global_child_idx += 1
+                    current = para
+
+            # 最後一個 child
+            if current:
+                page_start, page_end = self._extract_page_range(current)
+                children.append({
+                    "chunk_index": global_child_idx,
+                    "text_content": current,
+                    "metadata": {
+                        **parent_meta,
+                        "page_start": page_start or parent_meta.get("page_start"),
+                        "page_end": page_end or parent_meta.get("page_end"),
+                    },
+                })
+                global_child_idx += 1
+
+            # 如果只切出一個 child（parent 本就很短），不用再切
+            if len(children) <= 1:
+                children = []  # 直接當 standalone 入庫
+
+            result.append({
+                "parent": {
+                    "chunk_index": p_idx,
+                    "text_content": parent_text,
+                    "metadata": parent_meta,
+                },
+                "children": children,
+            })
+
+        return result
+
     # ── 內部方法 ─────────────────────────────────────
     def _split_by_heading(self, markdown: str) -> list[dict]:
         """

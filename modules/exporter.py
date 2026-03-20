@@ -102,3 +102,83 @@ class SupabaseExporter:
         count = len(result.data)
         print(f"[DB] 已寫入 document_chunks 表，共 {count} 筆 chunks")
         return count
+
+    def insert_parent_child_chunks(
+        self,
+        document_id: int,
+        parent_child_list: list[dict],
+        child_embeddings_map: dict[int, list[float]],
+    ) -> tuple[int, int]:
+        """
+        寫入 Parent-Child 結構的 chunks。
+
+        Parameters
+        ----------
+        document_id : int
+        parent_child_list : list[dict]
+            由 SemanticChunker.chunk_parent_child() 產出。
+            每個元素 = {"parent": {...}, "children": [{...}, ...]}
+        child_embeddings_map : dict[int, list[float]]
+            key = child 的 chunk_index，value = embedding 向量。
+
+        Returns
+        -------
+        (parent_count, child_count)
+        """
+        total_parents = 0
+        total_children = 0
+
+        for item in parent_child_list:
+            parent = item["parent"]
+            children = item["children"]
+
+            if not children:
+                # 沒有 child → 當作 standalone 寫入（有 embedding）
+                emb = child_embeddings_map.get(parent["chunk_index"])
+                row = {
+                    "document_id": document_id,
+                    "chunk_index": parent["chunk_index"],
+                    "text_content": parent["text_content"],
+                    "metadata": json.loads(json.dumps(parent.get("metadata", {}), ensure_ascii=False)),
+                    "chunk_type": "standalone",
+                }
+                if emb:
+                    row["embedding"] = emb
+                self._client.table("document_chunks").insert(row).execute()
+                total_parents += 1
+                continue
+
+            # 寫入 Parent（無 embedding）
+            parent_row = {
+                "document_id": document_id,
+                "chunk_index": parent["chunk_index"],
+                "text_content": parent["text_content"],
+                "metadata": json.loads(json.dumps(parent.get("metadata", {}), ensure_ascii=False)),
+                "chunk_type": "parent",
+            }
+            parent_result = self._client.table("document_chunks").insert(parent_row).execute()
+            parent_id = parent_result.data[0]["id"]
+            total_parents += 1
+
+            # 寫入 Children（有 embedding，指向 parent）
+            child_rows = []
+            for child in children:
+                emb = child_embeddings_map.get(child["chunk_index"])
+                child_row = {
+                    "document_id": document_id,
+                    "chunk_index": child["chunk_index"],
+                    "text_content": child["text_content"],
+                    "metadata": json.loads(json.dumps(child.get("metadata", {}), ensure_ascii=False)),
+                    "chunk_type": "child",
+                    "parent_chunk_id": parent_id,
+                }
+                if emb:
+                    child_row["embedding"] = emb
+                child_rows.append(child_row)
+
+            if child_rows:
+                self._client.table("document_chunks").insert(child_rows).execute()
+                total_children += len(child_rows)
+
+        print(f"[DB] Parent-Child 入庫完成：{total_parents} parents, {total_children} children")
+        return total_parents, total_children
