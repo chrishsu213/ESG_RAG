@@ -83,6 +83,8 @@ class AiProofreader:
         """
         # 如果文本夠短，一次處理
         if len(markdown_text) <= self._CHUNK_SIZE:
+            if on_progress:
+                on_progress(1, 1)
             return self._proofread_chunk(markdown_text)
 
         # 分段處理

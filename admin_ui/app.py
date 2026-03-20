@@ -377,11 +377,26 @@ elif page == "📤 上傳與匯入":
                 col_ai, col_clear = st.columns([1, 1])
                 with col_ai:
                     if st.button("🤖 AI 自動校對", key="ai_proofread"):
-                        with st.spinner("正在 AI 校對中，請稍候..."):
-                            proofreader = AiProofreader()
-                            st.session_state["draft_md"] = proofreader.proofread(st.session_state["draft_md"])
-                            st.toast("✅ AI 校對完成！")
-                            st.rerun()
+                        import time as _t
+                        _prog = st.progress(0, text="🤖 AI 校對準備中...")
+                        _status = st.empty()
+                        _t0 = _t.time()
+
+                        def _on_proofread_progress(current: int, total: int):
+                            pct = int(current / total * 100)
+                            _prog.progress(pct, text=f"🤖 AI 校對中：第 {current}/{total} 段（{pct}%）")
+                            _status.caption(f"⏱️ 已耗時 {_t.time() - _t0:.0f} 秒，預計還需 {max(0, int((_t.time()-_t0)/current*(total-current)))} 秒")
+
+                        proofreader = AiProofreader()
+                        result = proofreader.proofread(
+                            st.session_state["draft_md"],
+                            on_progress=_on_proofread_progress,
+                        )
+                        elapsed = _t.time() - _t0
+                        _prog.progress(100, text=f"✅ AI 校對完成！共耗時 {elapsed:.0f} 秒")
+                        _status.empty()
+                        st.session_state["draft_md"] = result
+                        st.rerun()
                 with col_clear:
                     if st.button("❌ 放棄草稿", key="discard_draft"):
                         # 清理磁碟上的暫存檔
