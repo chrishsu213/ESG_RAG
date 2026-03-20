@@ -7,3 +7,7 @@ font = "sans serif"
 
 [server]
 headless = true
+
+[client]
+# 關閉 Streamlit 的 multi-page 自動導覽列（admin_ui/pages/ 僅為程式碼模組）
+showSidebarNavigation = false
