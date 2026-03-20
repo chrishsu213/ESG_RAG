@@ -15,7 +15,7 @@ CATEGORY_GROUPS: dict[str, list[str]] = {
     "網站": [
         "官網",
         "ESG專區",
-        "新聞稿",
+        "新聞",
         "電子報",
     ],
     "其他": [
@@ -34,7 +34,7 @@ CATEGORY_OPTIONS: list[str] = [c for cats in CATEGORY_GROUPS.values() for c in c
 CATEGORY_WITH_QUARTER: set[str] = {"財務報告", "法說會簡報"}
 
 # 需要顯示「發布日期」的分類（時效性內容）
-CATEGORY_WITH_PUBLISH_DATE: set[str] = {"新聞稿", "電子報"}
+CATEGORY_WITH_PUBLISH_DATE: set[str] = {"新聞", "電子報"}
 
 # 其他選項
 LANGUAGE_OPTIONS        = ["zh-TW", "en", "ja", "zh-CN"]
