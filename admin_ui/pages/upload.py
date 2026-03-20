@@ -157,26 +157,13 @@ def _render_single_upload(client, category, display_name, report_group,
                           group, company, fiscal_period):
     uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"], key="single_uploader")
 
-    pdf_mode   = "text"
+    pdf_mode    = "vision_pdf"  # 固定使用最高品質模式
     page_offset = 0
     if uploaded_file and uploaded_file.name.lower().endswith(".pdf"):
-        col_mode, col_offset = st.columns([3, 1])
-        with col_mode:
-            pdf_mode = st.radio(
-                "PDF 解析模式",
-                ["text", "auto", "vision", "vision_pdf"],
-                index=3,
-                format_func=lambda x: {
-                    "text": "📝 純文字（免費）", "auto": "✨ 智能混合",
-                    "vision": "👁️ 逐頁 Vision", "vision_pdf": "📄 整份 PDF 上傳（推薦）",
-                }[x],
-                key="pdf_mode", horizontal=True,
-            )
-        with col_offset:
-            page_offset = st.number_input(
-                "頁碼偏移", min_value=0, value=0, step=1,
-                key="page_offset", help="整份上傳填 0。拆章節時填起始頁碼 -1。"
-            )
+        page_offset = st.number_input(
+            "頁碼偏移", min_value=0, value=0, step=1,
+            key="page_offset", help="整份上傳填 0。拆章節時填起始頁碼 -1。"
+        )
 
     if uploaded_file and st.button("🔍 解析並預覽", type="primary", key="parse_preview"):
         os.makedirs(_RAW_DATA_DIR, exist_ok=True)
@@ -320,14 +307,7 @@ def _render_single_upload(client, category, display_name, report_group,
 def _render_batch_upload(client, category, display_name, report_group, group, company):
     st.info("📦 批次模式：一次上傳多個 PDF / DOCX 檔案，系統將自動依序處理。")
 
-    batch_pdf_mode = st.radio(
-        "PDF 解析模式（套用至所有 PDF）",
-        ["text", "auto", "vision", "vision_pdf"], index=3,
-        format_func=lambda x: {
-            "text": "📝 純文字（免費）", "auto": "✨ 智能混合",
-            "vision": "👁️ 逐頁 Vision", "vision_pdf": "📄 整份 PDF 上傳（推薦）",
-        }[x], key="batch_pdf_mode", horizontal=True,
-    )
+    batch_pdf_mode = "vision_pdf"  # 固定使用最高品質模式
     batch_files = st.file_uploader(
         "拖放或選擇多個 PDF / DOCX 檔案", type=["pdf", "docx", "doc"],
         accept_multiple_files=True, key="batch_uploader",

@@ -257,12 +257,19 @@ class SemanticRetriever:
         response = self._rank_client.rank(request=request)
 
         # 根據 Ranking API 回傳的順序重組結果
+        import math
         reranked = []
         for rec in response.records:
             idx = int(rec.id)
             if 0 <= idx < len(results):
                 r = results[idx].copy()
-                r["rerank_score"] = rec.score
+                # 🛡️ Bug Fix：Ranking API 回傳 Unbounded Logits，必須套用 Sigmoid
+                # 壓縮至 0.0~1.0 機率區間，避免後續多因子加權公式崩潰
+                try:
+                    normalized_score = 1.0 / (1.0 + math.exp(-rec.score))
+                except OverflowError:
+                    normalized_score = 0.0 if rec.score < 0 else 1.0
+                r["rerank_score"] = normalized_score
                 reranked.append(r)
 
         logger.info(f"[RERANK] Ranking API 完成：{len(reranked)} 筆結果")

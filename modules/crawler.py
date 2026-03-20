@@ -130,23 +130,32 @@ class SiteCrawler:
                     url,
                 )
 
-            # 抓取頁面
+            # 抓取頁面（stream=True 防止大型非 HTML 檔案撐爆 RAM）
             try:
+                _req_kwargs = {
+                    "timeout": 15,
+                    "stream": True,  # 🛡️ Bug Fix：先取 header，確認是 HTML 再讀內容
+                    "headers": {"User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"},
+                }
                 try:
-                    resp = requests.get(url, timeout=15, headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"
-                    })
+                    resp = requests.get(url, **_req_kwargs)
                 except requests.exceptions.SSLError:
-                    resp = requests.get(url, timeout=15, verify=False, headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)"
-                    })
+                    resp = requests.get(url, verify=False, **_req_kwargs)
 
                 if resp.status_code != 200:
+                    resp.close()
                     continue
 
                 content_type = resp.headers.get("Content-Type", "")
                 if "text/html" not in content_type:
+                    resp.close()  # 非 HTML（影片/PDF/ZIP）直接關閉，不讀內容
                     continue
+
+                # 確認是 HTML 後才讀取內容
+                html_bytes = resp.content
+                resp.close()
+                encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+                html_text = html_bytes.decode(encoding, errors="replace")
 
             except Exception:
                 continue
@@ -156,8 +165,7 @@ class SiteCrawler:
 
             # 解析連結
             if current_depth < self._max_depth:
-                resp.encoding = resp.apparent_encoding
-                soup = BeautifulSoup(resp.text, "html.parser")
+                soup = BeautifulSoup(html_text, "html.parser")
 
                 for a_tag in soup.find_all("a", href=True):
                     href = a_tag["href"]
