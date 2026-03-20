@@ -55,39 +55,45 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  -- 🛡️ Bug Fix: 使用 DISTINCT ON 系列相同 parent 的 children 命中時只回傳分數最高八
-  -- 防止同一大段 parent text 重複拼接導致 Token 浪費與 LLM 幻覺
-  SELECT DISTINCT ON (COALESCE(c.parent_chunk_id, c.id))
-    c.id,
-    c.document_id,
-    c.chunk_index,
-    COALESCE(p.text_content, c.text_content)          AS text_content,
-    1 - (c.embedding <=> query_embedding)              AS similarity,
-    COALESCE(p.metadata, c.metadata)                   AS metadata,
-    d.file_name,
-    d.display_name,
-    d.category,
-    d.report_group,
-    d."group",
-    d.company,
-    d.fiscal_year,
-    d.language,
-    d.source_type,
-    'vector'::TEXT                                     AS search_type,
-    c.chunk_type,
-    c.parent_chunk_id
-  FROM document_chunks c
-  JOIN documents d ON c.document_id = d.id
-  LEFT JOIN document_chunks p ON c.parent_chunk_id = p.id
-  WHERE
-    c.chunk_type IN ('child', 'standalone')
-    AND (1 - (c.embedding <=> query_embedding)) >= match_threshold
-    AND (filter_language   IS NULL OR d.language    = filter_language)
-    AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
-    AND (filter_group      IS NULL OR d."group"     = filter_group)
-    AND (filter_company    IS NULL OR d.company     = filter_company)
-  -- DISTINCT ON 必須先依 DISTINCT 欄排序，確保保留最高分的子段 
-  ORDER BY COALESCE(c.parent_chunk_id, c.id), (1 - (c.embedding <=> query_embedding)) DESC
+  RETURN QUERY
+  -- 🛡️ Bug Fix: CTE 包裙 DISTINCT ON 去重，再在外層依相似度全域排序
+  -- 原則: DISTINCT ON 的 ORDER BY 必須對齠 pivot key 排序，導致 LIMIT 會按 chunk_id 拏點舊檔
+  WITH deduped_results AS (
+    SELECT DISTINCT ON (COALESCE(c.parent_chunk_id, c.id))
+      c.id,
+      c.document_id,
+      c.chunk_index,
+      COALESCE(p.text_content, c.text_content)          AS text_content,
+      1 - (c.embedding <=> query_embedding)              AS similarity,
+      COALESCE(p.metadata, c.metadata)                   AS metadata,
+      d.file_name,
+      d.display_name,
+      d.category,
+      d.report_group,
+      d."group",
+      d.company,
+      d.fiscal_year,
+      d.language,
+      d.source_type,
+      'vector'::TEXT                                     AS search_type,
+      c.chunk_type,
+      c.parent_chunk_id
+    FROM document_chunks c
+    JOIN documents d ON c.document_id = d.id
+    LEFT JOIN document_chunks p ON c.parent_chunk_id = p.id
+    WHERE
+      c.chunk_type IN ('child', 'standalone')
+      AND (1 - (c.embedding <=> query_embedding)) >= match_threshold
+      AND (filter_language   IS NULL OR d.language    = filter_language)
+      AND (filter_fiscal_year IS NULL OR d.fiscal_year = filter_fiscal_year)
+      AND (filter_group      IS NULL OR d."group"     = filter_group)
+      AND (filter_company    IS NULL OR d.company     = filter_company)
+    -- DISTINCT ON: 先以 group key 排序，再取每組最高分
+    ORDER BY COALESCE(c.parent_chunk_id, c.id), (1 - (c.embedding <=> query_embedding)) DESC
+  )
+  -- 🛡️ 外層全域排序：確保回傳結果按相似度從高到低
+  SELECT * FROM deduped_results
+  ORDER BY similarity DESC
   LIMIT match_count;
 END;
 $$;
@@ -172,32 +178,37 @@ BEGIN
     FROM vector_search v
     FULL OUTER JOIN fts_search f ON v.id = f.id
   )
-  -- 🛡️ Bug Fix: DISTINCT ON 去除同一 parent 被多個 child 命中時的重複 context
-  SELECT DISTINCT ON (COALESCE(c.parent_chunk_id, c.id))
-    c.id,
-    c.document_id,
-    c.chunk_index,
-    COALESCE(p.text_content, c.text_content)          AS text_content,
-    r.rrf_score                                        AS similarity,
-    COALESCE(p.metadata, c.metadata)                   AS metadata,
-    d.file_name,
-    d.display_name,
-    d.category,
-    d.report_group,
-    d."group",
-    d.company,
-    d.fiscal_year,
-    d.language,
-    d.source_type,
-    'hybrid'::TEXT                                     AS search_type,
-    c.chunk_type,
-    c.parent_chunk_id
-  FROM rrf_scores r
-  JOIN document_chunks c ON r.id = c.id
-  JOIN documents d ON c.document_id = d.id
-  LEFT JOIN document_chunks p ON c.parent_chunk_id = p.id
-  -- DISTINCT ON 必須先依 DISTINCT 欄排序，再以 rrf_score 取最高分
-  ORDER BY COALESCE(c.parent_chunk_id, c.id), r.rrf_score DESC
+  -- 🛡️ Bug Fix: CTE 包裙 DISTINCT ON，再在外層依分數全域排序
+  , deduped_results AS (
+    SELECT DISTINCT ON (COALESCE(c.parent_chunk_id, c.id))
+      c.id,
+      c.document_id,
+      c.chunk_index,
+      COALESCE(p.text_content, c.text_content)          AS text_content,
+      r.rrf_score                                        AS similarity,
+      COALESCE(p.metadata, c.metadata)                   AS metadata,
+      d.file_name,
+      d.display_name,
+      d.category,
+      d.report_group,
+      d."group",
+      d.company,
+      d.fiscal_year,
+      d.language,
+      d.source_type,
+      'hybrid'::TEXT                                     AS search_type,
+      c.chunk_type,
+      c.parent_chunk_id
+    FROM rrf_scores r
+    JOIN document_chunks c ON r.id = c.id
+    JOIN documents d ON c.document_id = d.id
+    LEFT JOIN document_chunks p ON c.parent_chunk_id = p.id
+    -- DISTINCT ON: 先依 group key 排序，取每組最高 rrf_score
+    ORDER BY COALESCE(c.parent_chunk_id, c.id), r.rrf_score DESC
+  )
+  -- 🛡️ 外層全域排序：確保回傳結果按相似度從高到低
+  SELECT * FROM deduped_results
+  ORDER BY similarity DESC
   LIMIT match_count;
 END;
 $$;

@@ -38,9 +38,15 @@ class SemanticChunker:
             self.overlap = overlap
             self.max_length = MAX_CHUNK_LENGTH
 
-    def chunk(self, markdown: str) -> list[dict[str, Any]]:
+    def chunk(self, markdown: str, strip_page_markers: bool = True) -> list[dict[str, Any]]:
         """
         將 Markdown 文本切割為 chunk 列表。
+
+        Parameters
+        ----------
+        strip_page_markers : bool
+            是否移除頁碼標記（預設 True）。
+            chunk_parent_child() 內部傳入 False 以保留標記供 child 解析頁碼用。
         """
         sections = self._split_by_heading(markdown)
 
@@ -66,11 +72,11 @@ class SemanticChunker:
                 overlap_text = prev_text[-self.overlap:]
                 text = overlap_text + "\n" + text
 
-            # 提取頁碼範圍
+            # 提取頁碼範圍（在清除標記之前）
             page_start, page_end = self._extract_page_range(text)
 
-            # 移除頁碼標記
-            clean_text = self._PAGE_MARKER_RE.sub("", text).strip()
+            # 🛡️ 保留標記（strip_page_markers=False）供外層使用，否則就地清除
+            clean_text = self._PAGE_MARKER_RE.sub("", text).strip() if strip_page_markers else text.strip()
 
             chunks.append({
                 "chunk_index": idx,
@@ -102,13 +108,10 @@ class SemanticChunker:
             "children": [ { chunk_index, text_content, metadata }, ... ]
         }
         """
-        # 先用現有邏輯切出 Parent chunks
-        parents = self.chunk(markdown)
+        # 🛡️ Bug Fix: strip_page_markers=False 保留頁碼標記，讓 child 補找正確頁碼
+        parents = self.chunk(markdown, strip_page_markers=False)
 
         result = []
-        # Children 的 chunk_index 從 len(parents) 開始，
-        # 確保不與 parent p_idx（0..N-1）衝突，
-        # 避免 child_embeddings_map 的 key 碰撞。
         global_child_idx = len(parents)
 
         for p_idx, parent in enumerate(parents):
@@ -131,7 +134,8 @@ class SemanticChunker:
                     page_start, page_end = self._extract_page_range(current)
                     children.append({
                         "chunk_index": global_child_idx,
-                        "text_content": current,
+                        # 🛡️ 写入內容時才手動清除標記
+                        "text_content": self._PAGE_MARKER_RE.sub("", current).strip(),
                         "metadata": {
                             **parent_meta,
                             "page_start": page_start or parent_meta.get("page_start"),
@@ -146,7 +150,7 @@ class SemanticChunker:
                 page_start, page_end = self._extract_page_range(current)
                 children.append({
                     "chunk_index": global_child_idx,
-                    "text_content": current,
+                    "text_content": self._PAGE_MARKER_RE.sub("", current).strip(),
                     "metadata": {
                         **parent_meta,
                         "page_start": page_start or parent_meta.get("page_start"),
@@ -155,14 +159,14 @@ class SemanticChunker:
                 })
                 global_child_idx += 1
 
-            # 如果只切出一個 child（parent 本就很短），不用再切
             if len(children) <= 1:
-                children = []  # 直接當 standalone 入庫
+                children = []
 
             result.append({
                 "parent": {
                     "chunk_index": p_idx,
-                    "text_content": parent_text,
+                    # 🛡️ Parent 自身也清除標記
+                    "text_content": self._PAGE_MARKER_RE.sub("", parent_text).strip(),
                     "metadata": parent_meta,
                 },
                 "children": children,

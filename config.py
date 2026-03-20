@@ -168,16 +168,16 @@ def get_genai_client(api_key: str | None = None):
 
 # ── RAG 動態設定 ──────────────────────────────────────
 import time as _time
+import threading as _threading
 
 class RagConfig:
     """從 Supabase rag_config 表動態讀取 RAG 搜尋參數。
 
     - 首次呼叫時從 DB 載入，之後 cache 60 秒
     - DB 不可用時自動 fallback 到程式碼預設值
-    - 🛡️ Bug Fix：cache 提升至 Class Variable，所有實例共用，防止高併發 DDoS Supabase
+    - 🛡️ class-level cache 防高併發 DDoS，threading.Lock 防 Cache Stampede
     """
 
-    # 程式碼預設值（DB 不可用時的 fallback）
     _DEFAULTS: dict[str, str] = {
         "hybrid_threshold": "0.2",
         "top_k_multiplier": "2",
@@ -186,11 +186,12 @@ class RagConfig:
         "source_weight":    "0.15",
         "system_prompt":    "{{DEFAULT}}",
     }
-    _CACHE_TTL = 60  # 秒
+    _CACHE_TTL = 60
 
-    # 🛡️ Class-level 共用 cache（跨所有實例共享，避免每次 API Request 重建快取）
+    # 🛡️ Class-level 共用 cache
     _shared_cache: dict[str, str] = {}
     _shared_cache_ts: float = 0.0
+    _lock = _threading.Lock()  # 🛡️ Double-Check Locking 防 Cache Stampede
 
     def __init__(self, supabase_client=None):
         self._client = supabase_client
@@ -204,12 +205,15 @@ class RagConfig:
             RagConfig._shared_cache = {r["key"]: r["value"] for r in rows}
             RagConfig._shared_cache_ts = _time.monotonic()
         except Exception:
-            pass  # 靜默失敗，使用舊 cache 或 defaults
+            pass
 
     def _ensure_fresh(self) -> None:
-        """若 cache 過期則重新載入。"""
+        """若 cache 過期則重新載入（Double-Check Locking 防止 Stampede）。"""
         if _time.monotonic() - RagConfig._shared_cache_ts > self._CACHE_TTL:
-            self._load()
+            with RagConfig._lock:
+                # 第二次檢查：避免等待鎖期間已被另一個 Thread 更新
+                if _time.monotonic() - RagConfig._shared_cache_ts > self._CACHE_TTL:
+                    self._load()
 
     def get(self, key: str, cast=str):
         """取得設定值，cast 可指定轉型（float/int/str）。"""
