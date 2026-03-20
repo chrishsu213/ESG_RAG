@@ -21,6 +21,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_parent_id  ON document_chunks(parent_chunk
 CREATE INDEX IF NOT EXISTS idx_chunks_chunk_type ON document_chunks(chunk_type);
 
 -- 4. 更新 match_chunks RPC：命中 child → 回傳 parent 的 text_content
+-- 必須先 DROP 才能改變 RETURNS TABLE 結構
+DROP FUNCTION IF EXISTS match_chunks(vector,integer,double precision,text,text,text,text);
 CREATE OR REPLACE FUNCTION match_chunks(
   query_embedding     vector(768),
   match_count         INT            DEFAULT 5,
@@ -96,6 +98,7 @@ END;
 $$;
 
 -- 5. 更新 match_chunks_hybrid RPC（同樣邏輯）
+DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,text,text,text,text);
 CREATE OR REPLACE FUNCTION match_chunks_hybrid(
   query_embedding     vector(768),
   query_text          TEXT,
