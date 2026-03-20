@@ -145,11 +145,9 @@ class RagChat:
         # 1) 搜尋相關 chunks
         results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
 
-        # 2) 如果啟用 re-ranking，精排結果
-        if search_mode == "hybrid_rerank" and results:
+        # 2) Re-ranking 精排（全面啟用）
+        if results:
             results = self._retriever.rerank(question, results, top_k=top_k)
-        else:
-            results = self._retriever._apply_time_weight(results)[:top_k]
 
         if not results:
             return {
@@ -307,10 +305,9 @@ class RagChat:
         # 1) 搜尋相關 chunks（同步完成）
         results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
 
-        if search_mode == "hybrid_rerank" and results:
+        # Re-ranking 精排（全面啟用）
+        if results:
             results = self._retriever.rerank(question, results, top_k=top_k)
-        else:
-            results = self._retriever._apply_time_weight(results)[:top_k]
 
         if not results:
             def empty_stream():
@@ -590,10 +587,9 @@ class RagChat:
                 company=grp.get("company"),
             )
 
-            if search_mode == "hybrid_rerank" and results:
+            # Re-ranking 精排（全面啟用）
+            if results:
                 results = self._retriever.rerank(question, results, top_k=top_k)
-            else:
-                results = self._retriever._apply_time_weight(results)[:top_k]
 
             for r in results:
                 r["_group_label"] = grp_label
