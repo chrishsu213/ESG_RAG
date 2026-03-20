@@ -198,7 +198,7 @@ BEGIN
       c.document_id,
       c.chunk_index,
       COALESCE(p.text_content, c.text_content)          AS text_content,
-      r.rrf_score                                        AS similarity,
+      r.rrf_score,                                          -- 保留原名供最外層明確排序
       COALESCE(p.metadata, c.metadata)                   AS metadata,
       d.file_name,
       d.display_name,
@@ -219,9 +219,15 @@ BEGIN
     -- DISTINCT ON: 先依 group key 排序，取每組最高 rrf_score
     ORDER BY COALESCE(c.parent_chunk_id, c.id), r.rrf_score DESC
   )
-  -- 🛡️ 外層全域排序：確保回傳結果按相似度從高到低
-  SELECT * FROM deduped_results
-  ORDER BY similarity DESC
+  -- 🛡️ R5+：明確使用 rrf_score 排序，避免蘇 similarity（純向量分）取代 RRF 分數的語義對調
+  SELECT
+    id, document_id, chunk_index, text_content,
+    rrf_score  AS similarity,  -- hybrid 的 similarity = rrf_score，同時保留 FTS 貢獻
+    metadata, file_name, display_name, category, report_group,
+    "group", company, fiscal_year, language, source_type,
+    search_type, chunk_type, parent_chunk_id
+  FROM deduped_results
+  ORDER BY rrf_score DESC   -- 依 RRF 分數排序，FTS 貢獻在最終一步不會被抗消
   LIMIT match_count;
 END;
 $$;
