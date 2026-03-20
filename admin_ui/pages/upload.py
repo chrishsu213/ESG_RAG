@@ -226,10 +226,26 @@ def _render_single_upload(client, category, display_name, report_group,
             )
         else:
             raw_md = DocxParser().parse(temp_path)
-        parse_progress.progress(95, text="解析完成，等待清洗...")
-        with st.spinner("🧹 清洗 Markdown 中，160 頁文件約需 10-30 秒，請稍候..."):
-            cleaned_md = MarkdownCleaner().clean(raw_md)
-        parse_progress.progress(100, text="✅ 草稿就緒！")
+        parse_progress.progress(95, text="解析完成，準備清洗...")
+
+        # 分批清洗：按 <!-- PAGE:N --> 標記分割，每 20 頁清洗一次並更新進度
+        import re as _re
+        _pages = _re.split(r'(?=<!-- PAGE:\d+ -->)', raw_md)
+        _pages = [p for p in _pages if p.strip()]
+        _BATCH = 20
+        _cleaner = MarkdownCleaner()
+        _cleaned_parts: list[str] = []
+        _total = max(len(_pages), 1)
+
+        for _i in range(0, _total, _BATCH):
+            _batch_text = "\n".join(_pages[_i:_i + _BATCH])
+            _cleaned_parts.append(_cleaner.clean(_batch_text))
+            _done = min(_i + _BATCH, _total)
+            _pct = int(95 + (_done / _total) * 4)   # 95% → 99%
+            parse_progress.progress(_pct, text=f"🧹 清洗中 {_done}/{_total} 頁...")
+
+        cleaned_md = "\n".join(_cleaned_parts)
+        parse_progress.progress(100, text="\u2705 草稿就緒！")
         st.session_state["draft_md"]          = cleaned_md
         st.session_state["draft_path"]        = temp_path
         st.session_state["draft_filename"]    = uploaded_file.name
