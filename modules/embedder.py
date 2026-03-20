@@ -14,18 +14,31 @@ from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_l
 
 from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
 
+# Phase 2: 可選的 dataclass 設定（完全向下相容）
+try:
+    from config_modules import EmbedderConfig
+except ImportError:
+    EmbedderConfig = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
 class GeminiEmbedder:
-    """封裝 Google Gemini Embedding API，支援單筆與批次嵌入。"""
+    """封裝 Google Gemini Embedding API，支援單筆與批次嵌入。
+
+    可傳入 EmbedderConfig 覆寫預設參數：
+        embedder = GeminiEmbedder(cfg=EmbedderConfig(dimension=1024))
+    """
 
     _MAX_BATCH_SIZE = 100       # API 單次上限
 
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(self, api_key: Optional[str] = None, cfg=None) -> None:
         from config import get_genai_client
         self._client = get_genai_client(api_key)
-        self._model = EMBEDDING_MODEL
+        if cfg is not None:
+            self._model = cfg.model
+        else:
+            self._model = EMBEDDING_MODEL
 
     # ── 單筆嵌入 ──────────────────────────────────────
     def embed_text(self, text: str) -> list[float]:

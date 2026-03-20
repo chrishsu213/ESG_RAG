@@ -20,6 +20,12 @@ from supabase import Client
 
 from config import EMBEDDING_MODEL, EMBEDDING_DIMENSION, GCP_PROJECT, RagConfig
 
+# Phase 2: 可選的 dataclass 設定（完全向下相容）
+try:
+    from config_modules import RetrieverConfig
+except ImportError:
+    RetrieverConfig = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 try:
     from langsmith import traceable
@@ -37,6 +43,9 @@ class SemanticRetriever:
     - search()        → 純向量搜尋
     - hybrid_search() → 向量 + 全文混合搜尋 (RRF)
     - rerank()        → 用 Vertex AI Ranking API 對結果精排
+
+    可傳入 RetrieverConfig 作為程式碼預設值（DB RagConfig 仍優先）：
+        retriever = SemanticRetriever(client, cfg=RetrieverConfig(default_top_k=8))
     """
 
     _EXPAND_MODEL = "gemini-2.5-flash-lite"  # 極快、極便宜，用於查詢展開
@@ -47,12 +56,14 @@ class SemanticRetriever:
         supabase_client: Client,
         api_key: Optional[str] = None,
         rag_config: Optional[RagConfig] = None,
+        cfg=None,  # Optional[RetrieverConfig]
     ) -> None:
         from config import get_genai_client
         self._client = supabase_client
         self._genai = get_genai_client(api_key)
         self._model = EMBEDDING_MODEL
         self._rag_config = rag_config or RagConfig(supabase_client)
+        self._cfg = cfg  # RetrieverConfig (code-level defaults; DB overrides at runtime)
 
     @traceable(name="embed_query")
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5), reraise=True)

@@ -1,0 +1,202 @@
+"""
+admin_ui/pages/doc_mgmt.py — 文件管理頁面
+功能：metadata inline 編輯、per-document 📖 查看 Chunk、🗑️ 刪除。
+"""
+import pandas as pd
+import streamlit as st
+from admin_ui.utils.constants import (
+    CATEGORY_OPTIONS, LANGUAGE_OPTIONS,
+    STATUS_OPTIONS, CONFIDENTIALITY_OPTIONS,
+)
+from admin_ui.utils.db import (
+    fetch_documents, delete_document, fetch_chunks_for_document,
+)
+
+
+def render(client):
+    st.title("🗃️ 文件管理")
+
+    docs = fetch_documents()
+    if not docs:
+        st.info("目前資料庫中沒有任何文件。")
+        return
+
+    df = pd.DataFrame(docs)
+    df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
+
+    # 確保欄位存在（相容舊資料）
+    for col, default in [
+        ("category", "其他"), ("display_name", None), ("report_group", None),
+        ("group", None), ("company", None), ("language", "zh-TW"),
+        ("status", "已發布"), ("confidentiality", "公開"),
+        ("fiscal_year", None), ("fiscal_period", "Annual"), ("tags", None),
+    ]:
+        if col not in df.columns:
+            df[col] = default
+    df["display_name"]   = df["display_name"].fillna(df["file_name"])
+    df["report_group"]   = df["report_group"].fillna("")
+    df["group"]          = df["group"].fillna("")
+    df["company"]        = df["company"].fillna("")
+    df["language"]       = df["language"].fillna("zh-TW")
+    df["status"]         = df["status"].fillna("已發布")
+    df["confidentiality"] = df["confidentiality"].fillna("公開")
+    df["fiscal_year"]    = df["fiscal_year"].fillna("")
+    df["fiscal_period"]  = df["fiscal_period"].fillna("Annual")
+
+    # ── 篩選列 ──
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+        filter_lang = st.selectbox("🌐 篩選語言", ["全部"] + sorted(df["language"].unique().tolist()), key="filter_lang")
+    with f_col2:
+        filter_cat  = st.selectbox("📂 篩選分類", ["全部"] + sorted(df["category"].unique().tolist()), key="filter_cat")
+
+    filtered_df = df.copy()
+    if filter_lang != "全部":
+        filtered_df = filtered_df[filtered_df["language"] == filter_lang]
+    if filter_cat != "全部":
+        filtered_df = filtered_df[filtered_df["category"] == filter_cat]
+
+    st.caption(f"顯示 {len(filtered_df)} / {len(df)} 份文件")
+
+    # ── 按分類分群 ──
+    for cat in sorted(filtered_df["category"].unique()):
+        cat_df = filtered_df[filtered_df["category"] == cat].copy()
+
+        with st.expander(f"📂 {cat}（{len(cat_df)} 份）", expanded=False):
+
+            # Metadata inline 編輯表格
+            edit_df = cat_df[["id", "display_name", "category", "group", "company",
+                               "report_group", "language", "status", "confidentiality",
+                               "fiscal_year", "fiscal_period", "source_type", "created_at"]].copy()
+            edited = st.data_editor(
+                edit_df,
+                column_config={
+                    "id":              st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                    "display_name":    st.column_config.TextColumn("文件名稱", width="large"),
+                    "category":        st.column_config.SelectboxColumn("分類", options=CATEGORY_OPTIONS, width="small"),
+                    "group":           st.column_config.TextColumn("集團", width="small"),
+                    "company":         st.column_config.TextColumn("子公司", width="small"),
+                    "report_group":    st.column_config.TextColumn("所屬報告", width="medium"),
+                    "language":        st.column_config.SelectboxColumn("語言", options=LANGUAGE_OPTIONS, width="small"),
+                    "status":          st.column_config.SelectboxColumn("狀態", options=STATUS_OPTIONS, width="small"),
+                    "confidentiality": st.column_config.SelectboxColumn("機密", options=CONFIDENTIALITY_OPTIONS, width="small"),
+                    "fiscal_year":     st.column_config.TextColumn("年度", width="small"),
+                    "fiscal_period":   st.column_config.SelectboxColumn("季度", options=["Annual","Q1","Q2","Q3","Q4"], width="small"),
+                    "source_type":     st.column_config.TextColumn("格式", disabled=True, width="small"),
+                    "created_at":      st.column_config.TextColumn("入庫時間", disabled=True, width="medium"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                key=f"editor_{cat}",
+            )
+
+            if st.button(f"💾 儲存 {cat} 的修改", key=f"save_{cat}"):
+                changes = 0
+                editable_cols = ["display_name", "category", "group", "company", "report_group",
+                                 "language", "status", "confidentiality", "fiscal_year", "fiscal_period"]
+                for _, row in edited.iterrows():
+                    orig = edit_df[edit_df["id"] == row["id"]]
+                    if orig.empty:
+                        continue
+                    updates = {
+                        col: (row[col] if row[col] else None)
+                        for col in editable_cols
+                        if str(row[col]) != str(orig.iloc[0][col])
+                    }
+                    if updates:
+                        client.table("documents").update(updates).eq("id", row["id"]).execute()
+                        changes += 1
+                if changes:
+                    fetch_documents.clear()
+                    st.toast(f"✅ 已更新 {changes} 份文件")
+                    st.rerun()
+                else:
+                    st.toast("沒有偵測到修改")
+
+            st.divider()
+            st.caption("📄 點擊 📖 查看 Chunk，點擊 🗑️ 刪除文件")
+
+            # ── 每份文件一列，附 View / Delete 按鈕 ──
+            for _, row in cat_df.iterrows():
+                doc_id   = int(row["id"])
+                doc_name = row["display_name"]
+                year     = str(row.get("fiscal_year", "") or "")
+                period   = str(row.get("fiscal_period", "Annual") or "Annual")
+                company  = str(row.get("company", "") or "")
+
+                r_name, r_view, r_del = st.columns([7, 1, 1])
+                with r_name:
+                    badges = ""
+                    if year:
+                        badges += f" `{year}`"
+                    if period and period != "Annual":
+                        badges += f" `{period}`"
+                    if company:
+                        badges += f" • {company}"
+                    st.markdown(f"**{doc_name}**{badges}")
+
+                with r_view:
+                    if st.button("📖", key=f"view_{doc_id}", help="查看 Chunk 內容"):
+                        if st.session_state.get("preview_doc_id") == doc_id:
+                            st.session_state.pop("preview_doc_id", None)
+                        else:
+                            st.session_state["preview_doc_id"] = doc_id
+                            st.session_state.pop("confirm_del_id", None)
+                        st.rerun()
+
+                with r_del:
+                    if st.button("🗑️", key=f"del_{doc_id}", help="刪除這份文件"):
+                        if st.session_state.get("confirm_del_id") == doc_id:
+                            st.session_state.pop("confirm_del_id", None)
+                        else:
+                            st.session_state["confirm_del_id"] = doc_id
+                            st.session_state.pop("preview_doc_id", None)
+                        st.rerun()
+
+                # 刪除確認
+                if st.session_state.get("confirm_del_id") == doc_id:
+                    with st.container(border=True):
+                        st.warning(f"確定要刪除「**{doc_name}**」及所有 Chunks？")
+                        cd1, cd2 = st.columns(2)
+                        with cd1:
+                            if st.button("✅ 確認刪除", key=f"del_yes_{doc_id}", type="primary"):
+                                delete_document(client, doc_id, row["file_name"])
+                                st.session_state.pop("confirm_del_id", None)
+                                st.rerun()
+                        with cd2:
+                            if st.button("❌ 取消", key=f"del_no_{doc_id}"):
+                                st.session_state.pop("confirm_del_id", None)
+                                st.rerun()
+
+                # Chunk 預覽
+                if st.session_state.get("preview_doc_id") == doc_id:
+                    with st.container(border=True):
+                        st.markdown(f"📖 **{doc_name}** 的 Chunk 內容")
+                        chunks_data = fetch_chunks_for_document(client, doc_id)
+                        if not chunks_data:
+                            st.info("此文件沒有 Chunk 資料。")
+                        else:
+                            st.caption(f"共 {len(chunks_data)} 個 Chunk")
+                            for chunk in chunks_data:
+                                idx       = chunk["chunk_index"]
+                                meta      = chunk.get("metadata") or {}
+                                title     = meta.get("section_title", "")
+                                ps        = meta.get("page_start")
+                                pe        = meta.get("page_end")
+                                ctype     = chunk.get("chunk_type", "standalone")
+                                parent_id = chunk.get("parent_chunk_id")
+                                type_badge = {"parent": "🗂️ parent", "child": "📝 child",
+                                              "standalone": "📄 standalone"}.get(ctype, ctype)
+                                label = f"Chunk #{idx} [{type_badge}]"
+                                if title:
+                                    label += f" | 🔖 {title}"
+                                if ps:
+                                    label += f" | 📄 第{ps}{f'-{pe}' if pe and pe != ps else ''}頁"
+                                if parent_id:
+                                    label += f" | ↑ parent={parent_id}"
+                                with st.expander(label, expanded=False):
+                                    st.markdown(chunk["text_content"])
+                        if st.button("✖️ 關閉預覽", key=f"close_preview_{doc_id}"):
+                            st.session_state.pop("preview_doc_id", None)
+                            st.rerun()

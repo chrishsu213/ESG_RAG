@@ -9,6 +9,12 @@ from typing import Any
 
 from config import CHUNK_OVERLAP_CHARS, MIN_CHUNK_LENGTH, MAX_CHUNK_LENGTH
 
+# Phase 2: 可選的 dataclass 設定（完全向下相容）
+try:
+    from config_modules import ChunkerConfig
+except ImportError:
+    ChunkerConfig = None  # type: ignore
+
 
 class SemanticChunker:
     """
@@ -16,14 +22,21 @@ class SemanticChunker:
     以 Markdown 標題 (# ~ ######) 為邊界拆分 chunk，
     每個 chunk 盡量包含一個完整章節概念。
     超過 MAX_CHUNK_LENGTH 的 chunk 會自動在段落邊界處再分割。
+
+    可傳入 ChunkerConfig 覆寫預設參數：
+        chunker = SemanticChunker(cfg=ChunkerConfig(max_length=3000))
     """
 
     _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
     _PAGE_MARKER_RE = re.compile(r"<!-- PAGE:(\d+) -->", re.MULTILINE)
 
-    def __init__(self, overlap: int = CHUNK_OVERLAP_CHARS) -> None:
-        self.overlap = overlap
-        self.max_length = MAX_CHUNK_LENGTH
+    def __init__(self, overlap: int = CHUNK_OVERLAP_CHARS, cfg=None) -> None:
+        if cfg is not None:
+            self.overlap = cfg.overlap
+            self.max_length = cfg.max_length
+        else:
+            self.overlap = overlap
+            self.max_length = MAX_CHUNK_LENGTH
 
     def chunk(self, markdown: str) -> list[dict[str, Any]]:
         """
