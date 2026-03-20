@@ -80,7 +80,7 @@ BEGIN
       AND (filter_company     IS NULL OR d.company     = filter_company)
     -- 嚴格遵循 HNSW Index 觸發語法：ORDER BY <=> LIMIT
     ORDER BY c.embedding <=> query_embedding
-    LIMIT match_count * 5
+    LIMIT match_count * 20  -- 🛡️ 候選池坍縮修復：從 5 擴大到 20 倍
   ),
   -- Layer 2：對小候選池做 Parent-Child 替換 + 相似度篩選 + DISTINCT ON 去重
   deduped_results AS (

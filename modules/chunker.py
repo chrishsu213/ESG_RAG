@@ -30,8 +30,9 @@ class SemanticChunker:
     _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
     _PAGE_MARKER_RE = re.compile(r"<!-- PAGE:(\d+) -->", re.MULTILINE)
     # 表格保護：完整 Markdown 表格（含標頭分隔列）視為不可切割原子單位
+    # 🛡️ 修復：(?:\n|$) 容許最後一列緊貼 EOF 無換行，防表格漏匹配
     _TABLE_RE = re.compile(
-        r"(?:(?:\|[^\n]+\|\n)+(?:\|[-|: ]+\|\n)(?:\|[^\n]+\|\n)*)",
+        r"(?:(?:\|[^\n]+\|(?:\n|$))+(?:\|[-|: ]+\|(?:\n|$))(?:\|[^\n]+\|(?:\n|$))*)",
         re.MULTILINE,
     )
     _TABLE_PLACEHOLDER_RE = re.compile(r"__TABLE_(\d+)__")
@@ -131,22 +132,26 @@ class SemanticChunker:
             for para in paragraphs:
                 if not current:
                     current = para
-                elif len(current) + len(para) + 2 <= child_max_length:
-                    current += "\n\n" + para
                 else:
-                    page_start, page_end = self._extract_page_range(current)
-                    restored = self._restore_tables(current, table_map)
-                    children.append({
-                        "chunk_index": global_child_idx,
-                        "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
-                        "metadata": {
-                            **parent_meta,
-                            "page_start": page_start or parent_meta.get("page_start"),
-                            "page_end": page_end or parent_meta.get("page_end"),
-                        },
-                    })
-                    global_child_idx += 1
-                    current = para
+                    test_str = current + "\n\n" + para
+                    # 🛡️ Token爆炸修復：計算還原表格後的真實長度（非佔位符長度）
+                    real_length = len(self._restore_tables(test_str, table_map))
+                    if real_length <= child_max_length:
+                        current = test_str
+                    else:
+                        page_start, page_end = self._extract_page_range(current)
+                        restored = self._restore_tables(current, table_map)
+                        children.append({
+                            "chunk_index": global_child_idx,
+                            "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
+                            "metadata": {
+                                **parent_meta,
+                                "page_start": page_start or parent_meta.get("page_start"),
+                                "page_end": page_end or parent_meta.get("page_end"),
+                            },
+                        })
+                        global_child_idx += 1
+                        current = para
 
             if current:
                 page_start, page_end = self._extract_page_range(current)
@@ -273,12 +278,17 @@ class SemanticChunker:
             if not para:
                 continue
 
-            if current_text and len(current_text) + len(para) + 2 > self.max_length:
-                # 還原表格後存入
-                sub_sections.append(self._restore_tables(current_text, table_map))
-                current_text = para
+            if current_text:
+                test_str = current_text + "\n\n" + para
+                # 🛡️ Token爆炸修復：計算還原表格後的真實長度
+                real_length = len(self._restore_tables(test_str, table_map))
+                if real_length > self.max_length:
+                    sub_sections.append(self._restore_tables(current_text, table_map))
+                    current_text = para
+                else:
+                    current_text = test_str
             else:
-                current_text = current_text + "\n\n" + para if current_text else para
+                current_text = para
 
         if current_text:
             sub_sections.append(self._restore_tables(current_text, table_map))

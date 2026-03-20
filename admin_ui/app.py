@@ -35,7 +35,6 @@ def _cleanup_temp_files() -> None:
                 pass
 
 
-_cleanup_temp_files()
 
 
 import streamlit as st
@@ -44,6 +43,15 @@ from config import _get_secret
 
 from admin_ui.utils import db as db_utils
 from admin_ui.pages import overview, upload, doc_mgmt, search, chatbot, terms, settings
+
+
+@st.cache_resource(ttl=3600)  # 🛡️ 每小時只執行一次，不卡死 UI 主執行緒
+def _run_cleanup():
+    _cleanup_temp_files()
+    return True
+
+
+_run_cleanup()
 
 # ── 頁面設定 ──────────────────────────────────────────────
 st.set_page_config(
