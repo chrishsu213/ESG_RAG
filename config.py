@@ -14,6 +14,7 @@ Vertex AI 認證：Cloud Run 使用 ADC（compute service account），
      本機開發需 gcloud auth application-default login。
 """
 import os
+import functools
 from dotenv import load_dotenv
 
 load_dotenv()

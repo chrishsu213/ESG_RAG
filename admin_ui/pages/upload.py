@@ -326,6 +326,9 @@ def _render_single_upload(client, category, display_name, report_group,
                         category=category, display_name=final_name, report_group=rg,
                         group=group if group else None, company=company if company else None,
                         fiscal_period=fiscal_period,
+                        fiscal_year=fiscal_year if fiscal_year else None,
+                        language=language if language else None,
+                        publish_date=publish_date if publish_date else None,
                     )
                     p_cnt, c_cnt = exporter.insert_parent_child_chunks(doc_id, parent_child_list, child_embeddings_map)
                     progress.progress(100, text="完成！")
@@ -479,7 +482,8 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
                 for i, url in enumerate(urls):
                     bp.progress(int((i / len(urls)) * 100), text=f"({i+1}/{len(urls)})")
                     try:
-                        ok, _ = _process_url(client, url, category, "", report_group, group, company)
+                        ok, _ = _process_url(client, url, category, "", report_group, group, company,
+                                             fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                         if ok:
                             ok_n += 1
                         else:
@@ -528,7 +532,8 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
                 for i, url in enumerate(c_urls):
                     bp.progress(int((i / len(c_urls)) * 100), text=f"({i+1}/{len(c_urls)})")
                     try:
-                        ok, msg = _process_url(client, url, category, "", report_group, group, company)
+                        ok, msg = _process_url(client, url, category, "", report_group, group, company,
+                                              fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                         if ok:
                             ok_n += 1
                         else:
