@@ -93,7 +93,10 @@ class SemanticChunker:
         parents = self.chunk(markdown)
 
         result = []
-        global_child_idx = 0
+        # Children 的 chunk_index 從 len(parents) 開始，
+        # 確保不與 parent p_idx（0..N-1）衝突，
+        # 避免 child_embeddings_map 的 key 碰撞。
+        global_child_idx = len(parents)
 
         for p_idx, parent in enumerate(parents):
             parent_text = parent["text_content"]
