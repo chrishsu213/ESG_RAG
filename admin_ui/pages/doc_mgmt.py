@@ -1,16 +1,23 @@
 """
 admin_ui/pages/doc_mgmt.py — 文件管理頁面
-功能：metadata inline 編輯、per-document 📖 查看 Chunk、🗑️ 刪除。
+功能：群組分類篩選、per-document Popover 編輯、📖 查看 Chunk、🗑️ 刪除。
 """
 import pandas as pd
 import streamlit as st
 from admin_ui.utils.constants import (
-    CATEGORY_OPTIONS, LANGUAGE_OPTIONS,
-    STATUS_OPTIONS, CONFIDENTIALITY_OPTIONS,
+    CATEGORY_GROUPS, CATEGORY_OPTIONS, LANGUAGE_OPTIONS,
+    STATUS_OPTIONS, CONFIDENTIALITY_OPTIONS, FISCAL_YEAR_OPTIONS,
 )
 from admin_ui.utils.db import (
     fetch_documents, delete_document, fetch_chunks_for_document,
 )
+
+# 反向查表：category → group label
+_CAT_TO_GROUP: dict[str, str] = {
+    cat: grp
+    for grp, cats in CATEGORY_GROUPS.items()
+    for cat in cats
+}
 
 
 def render(client):
@@ -29,95 +36,56 @@ def render(client):
         ("category", "其他"), ("display_name", None), ("report_group", None),
         ("group", None), ("company", None), ("language", "zh-TW"),
         ("status", "已發布"), ("confidentiality", "公開"),
-        ("fiscal_year", None), ("fiscal_period", "Annual"), ("tags", None),
+        ("fiscal_year", None), ("fiscal_period", "Annual"), ("publish_date", None),
     ]:
         if col not in df.columns:
             df[col] = default
-    df["display_name"]   = df["display_name"].fillna(df["file_name"])
-    df["report_group"]   = df["report_group"].fillna("")
-    df["group"]          = df["group"].fillna("")
-    df["company"]        = df["company"].fillna("")
-    df["language"]       = df["language"].fillna("zh-TW")
-    df["status"]         = df["status"].fillna("已發布")
+    df["display_name"]    = df["display_name"].fillna(df["file_name"])
+    df["report_group"]    = df["report_group"].fillna("")
+    df["group"]           = df["group"].fillna("")
+    df["company"]         = df["company"].fillna("")
+    df["language"]        = df["language"].fillna("zh-TW")
+    df["status"]          = df["status"].fillna("已發布")
     df["confidentiality"] = df["confidentiality"].fillna("公開")
-    df["fiscal_year"]    = df["fiscal_year"].fillna("")
-    df["fiscal_period"]  = df["fiscal_period"].fillna("Annual")
+    df["fiscal_year"]     = df["fiscal_year"].fillna("")
+    df["fiscal_period"]   = df["fiscal_period"].fillna("Annual")
 
-    # ── 篩選列 ──
-    f_col1, f_col2 = st.columns(2)
+    # ── 篩選列：群組 → 子分類 + 語言 ──────────────────────────
+    f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
-        filter_lang = st.selectbox("🌐 篩選語言", ["全部"] + sorted(df["language"].unique().tolist()), key="filter_lang")
+        filter_lang = st.selectbox(
+            "語言", ["全部"] + sorted(df["language"].unique().tolist()),
+            key="filter_lang"
+        )
     with f_col2:
-        filter_cat  = st.selectbox("📂 篩選分類", ["全部"] + sorted(df["category"].unique().tolist()), key="filter_cat")
+        group_options = ["全部"] + list(CATEGORY_GROUPS.keys())
+        filter_group_label = st.selectbox("類別群組", group_options, key="filter_group_label")
+    with f_col3:
+        if filter_group_label == "全部":
+            cat_options = ["全部"] + CATEGORY_OPTIONS
+        else:
+            cat_options = ["全部"] + CATEGORY_GROUPS[filter_group_label]
+        filter_cat = st.selectbox("文件分類", cat_options, key="filter_cat")
 
     filtered_df = df.copy()
     if filter_lang != "全部":
         filtered_df = filtered_df[filtered_df["language"] == filter_lang]
     if filter_cat != "全部":
         filtered_df = filtered_df[filtered_df["category"] == filter_cat]
+    elif filter_group_label != "全部":
+        # 只過濾群組，不鎖定子分類
+        grp_cats = CATEGORY_GROUPS[filter_group_label]
+        filtered_df = filtered_df[filtered_df["category"].isin(grp_cats)]
 
     st.caption(f"顯示 {len(filtered_df)} / {len(df)} 份文件")
+    st.divider()
 
-    # ── 按分類分群 ──
+    # ── 依分類顯示，每份文件一列 + Popover 編輯 ──────────────
     for cat in sorted(filtered_df["category"].unique()):
         cat_df = filtered_df[filtered_df["category"] == cat].copy()
+        grp_label = _CAT_TO_GROUP.get(cat, "其他")
 
-        with st.expander(f"📂 {cat}（{len(cat_df)} 份）", expanded=False):
-
-            # Metadata inline 編輯表格
-            edit_df = cat_df[["id", "display_name", "category", "group", "company",
-                               "report_group", "language", "status", "confidentiality",
-                               "fiscal_year", "fiscal_period", "source_type", "created_at"]].copy()
-            edited = st.data_editor(
-                edit_df,
-                column_config={
-                    "id":              st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                    "display_name":    st.column_config.TextColumn("文件名稱", width="large"),
-                    "category":        st.column_config.SelectboxColumn("分類", options=CATEGORY_OPTIONS, width="small"),
-                    "group":           st.column_config.TextColumn("集團", width="small"),
-                    "company":         st.column_config.TextColumn("子公司", width="small"),
-                    "report_group":    st.column_config.TextColumn("所屬報告", width="medium"),
-                    "language":        st.column_config.SelectboxColumn("語言", options=LANGUAGE_OPTIONS, width="small"),
-                    "status":          st.column_config.SelectboxColumn("狀態", options=STATUS_OPTIONS, width="small"),
-                    "confidentiality": st.column_config.SelectboxColumn("機密", options=CONFIDENTIALITY_OPTIONS, width="small"),
-                    "fiscal_year":     st.column_config.TextColumn("年度", width="small"),
-                    "fiscal_period":   st.column_config.SelectboxColumn("季度", options=["Annual","Q1","Q2","Q3","Q4"], width="small"),
-                    "source_type":     st.column_config.TextColumn("格式", disabled=True, width="small"),
-                    "created_at":      st.column_config.TextColumn("入庫時間", disabled=True, width="medium"),
-                },
-                hide_index=True,
-                use_container_width=True,
-                num_rows="fixed",
-                key=f"editor_{cat}",
-            )
-
-            if st.button(f"💾 儲存 {cat} 的修改", key=f"save_{cat}"):
-                changes = 0
-                editable_cols = ["display_name", "category", "group", "company", "report_group",
-                                 "language", "status", "confidentiality", "fiscal_year", "fiscal_period"]
-                for _, row in edited.iterrows():
-                    orig = edit_df[edit_df["id"] == row["id"]]
-                    if orig.empty:
-                        continue
-                    updates = {
-                        col: (row[col] if row[col] else None)
-                        for col in editable_cols
-                        if str(row[col]) != str(orig.iloc[0][col])
-                    }
-                    if updates:
-                        client.table("documents").update(updates).eq("id", row["id"]).execute()
-                        changes += 1
-                if changes:
-                    fetch_documents.clear()
-                    st.toast(f"✅ 已更新 {changes} 份文件")
-                    st.rerun()
-                else:
-                    st.toast("沒有偵測到修改")
-
-            st.divider()
-            st.caption("📄 點擊 📖 查看 Chunk，點擊 🗑️ 刪除文件")
-
-            # ── 每份文件一列，附 View / Delete 按鈕 ──
+        with st.expander(f"{grp_label} › {cat}（{len(cat_df)} 份）", expanded=True):
             for _, row in cat_df.iterrows():
                 doc_id   = int(row["id"])
                 doc_name = row["display_name"]
@@ -125,7 +93,7 @@ def render(client):
                 period   = str(row.get("fiscal_period", "Annual") or "Annual")
                 company  = str(row.get("company", "") or "")
 
-                r_name, r_view, r_del = st.columns([7, 1, 1])
+                r_name, r_edit, r_view, r_del = st.columns([6, 1, 1, 1])
                 with r_name:
                     badges = ""
                     if year:
@@ -135,6 +103,52 @@ def render(client):
                     if company:
                         badges += f" • {company}"
                     st.markdown(f"**{doc_name}**{badges}")
+
+                # ── Popover 編輯（不展開整頁）──────────────
+                with r_edit:
+                    with st.popover("✏️", help="編輯此文件 Metadata"):
+                        st.markdown(f"**編輯：{doc_name}**")
+                        p_name = st.text_input(
+                            "顯示名稱", value=doc_name,
+                            key=f"p_name_{doc_id}"
+                        )
+                        p_cat = st.selectbox(
+                            "分類", CATEGORY_OPTIONS,
+                            index=CATEGORY_OPTIONS.index(row["category"]) if row["category"] in CATEGORY_OPTIONS else 0,
+                            key=f"p_cat_{doc_id}"
+                        )
+                        p_year_opts = ["（不填）"] + FISCAL_YEAR_OPTIONS
+                        p_year_idx  = p_year_opts.index(year) if year in p_year_opts else 0
+                        p_year = st.selectbox("年度", p_year_opts, index=p_year_idx, key=f"p_year_{doc_id}")
+                        p_lang = st.selectbox(
+                            "語言", LANGUAGE_OPTIONS,
+                            index=LANGUAGE_OPTIONS.index(row["language"]) if row["language"] in LANGUAGE_OPTIONS else 0,
+                            key=f"p_lang_{doc_id}"
+                        )
+                        p_group   = st.text_input("集團",    value=row["group"],       key=f"p_grp_{doc_id}")
+                        p_company = st.text_input("子公司",  value=row["company"],     key=f"p_comp_{doc_id}")
+                        p_rg      = st.text_input("所屬報告", value=row["report_group"], key=f"p_rg_{doc_id}")
+                        p_status  = st.selectbox(
+                            "狀態", STATUS_OPTIONS,
+                            index=STATUS_OPTIONS.index(row["status"]) if row["status"] in STATUS_OPTIONS else 0,
+                            key=f"p_status_{doc_id}"
+                        )
+
+                        if st.button("💾 儲存", key=f"p_save_{doc_id}", type="primary"):
+                            updates = {
+                                "display_name": p_name or None,
+                                "category":     p_cat,
+                                "fiscal_year":  None if p_year == "（不填）" else p_year,
+                                "language":     p_lang,
+                                "group":        p_group or None,
+                                "company":      p_company or None,
+                                "report_group": p_rg or None,
+                                "status":       p_status,
+                            }
+                            client.table("documents").update(updates).eq("id", doc_id).execute()
+                            fetch_documents.clear()
+                            st.toast(f"✅ 已更新：{p_name}")
+                            st.rerun()
 
                 with r_view:
                     if st.button("📖", key=f"view_{doc_id}", help="查看 Chunk 內容"):
