@@ -21,7 +21,7 @@ from modules.proofreader import AiProofreader
 from modules.parser_audio import AudioParser
 from modules.embedder import GeminiEmbedder
 from admin_ui.utils.constants import (
-    CATEGORY_GROUPS, CATEGORY_WITH_QUARTER, CATEGORY_WITH_PUBLISH_DATE,
+    CATEGORY_GROUPS, CATEGORY_OPTIONS, CATEGORY_WITH_QUARTER, CATEGORY_WITH_PUBLISH_DATE,
     LANGUAGE_OPTIONS, FISCAL_YEAR_OPTIONS,
 )
 
