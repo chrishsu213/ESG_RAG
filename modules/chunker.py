@@ -29,6 +29,12 @@ class SemanticChunker:
 
     _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
     _PAGE_MARKER_RE = re.compile(r"<!-- PAGE:(\d+) -->", re.MULTILINE)
+    # 表格保護：完整 Markdown 表格（含標頭分隔列）視為不可切割原子單位
+    _TABLE_RE = re.compile(
+        r"(?:(?:\|[^\n]+\|\n)+(?:\|[-|: ]+\|\n)(?:\|[^\n]+\|\n)*)",
+        re.MULTILINE,
+    )
+    _TABLE_PLACEHOLDER_RE = re.compile(r"__TABLE_(\d+)__")
 
     def __init__(self, overlap: int = CHUNK_OVERLAP_CHARS, cfg=None) -> None:
         if cfg is not None:
@@ -101,12 +107,7 @@ class SemanticChunker:
         - Parent = 現有 chunk() 邏輯切出的大段（≤ MAX_CHUNK_LENGTH）
         - Child  = Parent 內再依段落切細（≤ child_max_length）
 
-        Returns
-        -------
-        list of {
-            "parent": { chunk_index, text_content, metadata },
-            "children": [ { chunk_index, text_content, metadata }, ... ]
-        }
+        🛡️ 表格保護：Markdown 表格視為不可切割原子單位，不會在表格中間切斷。
         """
         # 🛡️ Bug Fix: strip_page_markers=False 保留頁碼標記，讓 child 補找正確頁碼
         parents = self.chunk(markdown, strip_page_markers=False)
@@ -118,8 +119,11 @@ class SemanticChunker:
             parent_text = parent["text_content"]
             parent_meta = parent["metadata"]
 
-            # 將 parent 切成 children（依雙換行段落邊界）
-            paragraphs = [p.strip() for p in re.split(r"\n\s*\n", parent_text) if p.strip()]
+            # 🛡️ 表格保護：鎖定表格避免被段落切割截斷
+            protected_parent, table_map = self._atomize_tables(parent_text)
+            paragraphs = [
+                p.strip() for p in re.split(r"\n\s*\n", protected_parent) if p.strip()
+            ]
 
             children: list[dict[str, Any]] = []
             current = ""
@@ -130,12 +134,11 @@ class SemanticChunker:
                 elif len(current) + len(para) + 2 <= child_max_length:
                     current += "\n\n" + para
                 else:
-                    # 存下目前累積的 child
                     page_start, page_end = self._extract_page_range(current)
+                    restored = self._restore_tables(current, table_map)
                     children.append({
                         "chunk_index": global_child_idx,
-                        # 🛡️ 写入內容時才手動清除標記
-                        "text_content": self._PAGE_MARKER_RE.sub("", current).strip(),
+                        "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
                         "metadata": {
                             **parent_meta,
                             "page_start": page_start or parent_meta.get("page_start"),
@@ -145,12 +148,12 @@ class SemanticChunker:
                     global_child_idx += 1
                     current = para
 
-            # 最後一個 child
             if current:
                 page_start, page_end = self._extract_page_range(current)
+                restored = self._restore_tables(current, table_map)
                 children.append({
                     "chunk_index": global_child_idx,
-                    "text_content": self._PAGE_MARKER_RE.sub("", current).strip(),
+                    "text_content": self._PAGE_MARKER_RE.sub("", restored).strip(),
                     "metadata": {
                         **parent_meta,
                         "page_start": page_start or parent_meta.get("page_start"),
@@ -165,7 +168,6 @@ class SemanticChunker:
             result.append({
                 "parent": {
                     "chunk_index": p_idx,
-                    # 🛡️ Parent 自身也清除標記
                     "text_content": self._PAGE_MARKER_RE.sub("", parent_text).strip(),
                     "metadata": parent_meta,
                 },
@@ -173,6 +175,7 @@ class SemanticChunker:
             })
 
         return result
+
 
     # ── 內部方法 ─────────────────────────────────────
     def _split_by_heading(self, markdown: str) -> list[dict]:
@@ -220,15 +223,48 @@ class SemanticChunker:
 
         return merged
 
+    def _atomize_tables(self, text: str) -> tuple[str, dict[str, str]]:
+        """將 Markdown 表格替換為不透明占位符，防止後續切割時切斷表格。
+
+        Returns
+        -------
+        (processed_text, table_map)
+            table_map: {"__TABLE_0__": "原始表格內容", ...}
+        """
+        table_map: dict[str, str] = {}
+        counter = 0
+
+        def replace_table(match: re.Match) -> str:
+            nonlocal counter
+            key = f"__TABLE_{counter}__"
+            table_map[key] = match.group(0)
+            counter += 1
+            return key
+
+        processed = self._TABLE_RE.sub(replace_table, text)
+        return processed, table_map
+
+    @staticmethod
+    def _restore_tables(text: str, table_map: dict[str, str]) -> str:
+        """將占位符還原為原始表格內容。"""
+        for key, original in table_map.items():
+            text = text.replace(key, original)
+        return text
+
     def _split_long_section(self, section: dict) -> list[dict]:
-        """將過長的 section 在段落邊界處分割為多個較短的 section。"""
+        """將過長的 section 在段落邊界處分割為多個較短的 section。
+
+        表格會被視為不可切割的原子單位，不會在表格中間切斷。
+        """
         text = section["text"]
         title = section.get("title", "")
         level = section.get("level")
 
-        # 以雙換行分段
-        paragraphs = re.split(r"\n\s*\n", text)
-        
+        # 🛡️ 先鎖定表格，避免在段落切割時切斷表格結構
+        protected_text, table_map = self._atomize_tables(text)
+
+        paragraphs = re.split(r"\n\s*\n", protected_text)
+
         sub_sections: list[dict] = []
         current_text = ""
 
@@ -237,17 +273,16 @@ class SemanticChunker:
             if not para:
                 continue
 
-            # 如果加入這段後會超過上限，先存起來
             if current_text and len(current_text) + len(para) + 2 > self.max_length:
-                sub_sections.append(current_text)
+                # 還原表格後存入
+                sub_sections.append(self._restore_tables(current_text, table_map))
                 current_text = para
             else:
                 current_text = current_text + "\n\n" + para if current_text else para
 
         if current_text:
-            sub_sections.append(current_text)
+            sub_sections.append(self._restore_tables(current_text, table_map))
 
-        # 轉為 section dict 列表
         if len(sub_sections) <= 1:
             return [section]
 
