@@ -523,16 +523,38 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
         if crawler_root and st.button("🔍 開始掃描", key="start_crawl"):
             exclude_list = [p.strip() for p in crawler_exclude.split(",") if p.strip()]
             cp, status   = st.progress(0), st.empty()
+            _crawl_stats = {"visited": 0}
 
             def on_crawl(found, visited, current):
-                cp.progress(min(int((visited / crawler_max) * 100), 99))
-                status.caption(f"發現 {found} 頁 | 掃描 {visited} 連結 | {current[:60]}...")
+                _crawl_stats["visited"] = visited
+                # 進度根據「已發現頁面 / 預期最大頁面數」計算（原版用 visited/max 会誤導）
+                cp.progress(min(int((found / max(crawler_max, 1)) * 100), 99))
+                status.caption(f"發現 {found} 頁 | 嘗試 {visited} 連結 | {current[:60]}...")
 
+            import time as _t
+            _t0 = _t.time()
             crawler = SiteCrawler(root_url=crawler_root, max_pages=crawler_max,
                                   max_depth=crawler_depth, exclude_patterns=exclude_list, on_progress=on_crawl)
             discovered = crawler.crawl()
-            cp.progress(100, text="掃描完成！")
+            _elapsed = _t.time() - _t0
+            visited_total = _crawl_stats["visited"]
+
+            cp.progress(100, text=f"掃描完成！發現 {len(discovered)} 頁，共耗 {_elapsed:.0f} 秒")
             status.empty()
+
+            # 專深診斷：如果發現頁數遠低於預期，說明原因
+            if len(discovered) == 0:
+                st.error(
+                    f"⚠️ 無法發現任何頁面（昇試 {visited_total} 個連結）\n"
+                    f"可能原因：網站閘速、封鎖爬蟲、SSL 錯誤、或需登入。"
+                )
+            elif len(discovered) < crawler_max * 0.1:
+                st.warning(
+                    f"⚠️ 只找到 {len(discovered)} 頁（設定上限 {crawler_max}），可能原因：\n"
+                    f"- 大量 URL 逢時超時（謎威網站回應慢，忇略 {visited_total - len(discovered)} 個）\n"
+                    f"- 建議改用 🗺️ Sitemap 批次 模式，直接輸入網站提供的 sitemap.xml"
+                )
+
             st.session_state["crawler_urls"] = discovered
 
         if "crawler_urls" in st.session_state and st.session_state["crawler_urls"]:
