@@ -1,6 +1,6 @@
 # ============================================================
-# 批次入庫設定檔
-# 填好後執行：python scripts/batch_ingest.py
+# 批次入庫設定檔 — RAG專用資料夾 完整清單
+# 確認無誤後執行：python scripts/batch_ingest.py
 # ============================================================
 
 defaults:
@@ -10,50 +10,264 @@ defaults:
 
 targets:
 
-  # ── PDF 文件（本機路徑，支援絕對路徑）────────────────────
+  # ── 永續報告書 ──────────────────────────────────────────────
   - type: pdf_list
     category: 永續報告書
-    fiscal_year: "2024"
     language: zh-TW
     group: 台泥企業團
-    company: CIMPOR
-    page_offset: 0          # 拆章節時填起始頁偏移，整份填 0
+    company: 台泥
+    fiscal_year: "2021"
     files:
-      - C:\Users\chris.hsu\Documents\CIMPOR_2024_Sustainability.pdf
-      # 繼續加入更多 PDF 路徑...
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2021年永續報告書.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2022年永續報告書.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2023年永續報告書.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2024年永續報告書.pdf
+
+  # ── TCFD 報告 ───────────────────────────────────────────────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2021"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2021 TCFD Report.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2022 TCFD Report.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2023 TCFD Report.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2024 TCFD Report.pdf
+
+  # ── 年度報告 ────────────────────────────────────────────────
+  - type: pdf_list
+    category: 年度報告
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2021"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/110年度年報及年報附冊.pdf
 
   - type: pdf_list
     category: 年度報告
-    fiscal_year: "2024"
     language: zh-TW
     group: 台泥企業團
-    company: null           # null = 不指定子公司（代表集團本體）
+    company: 台泥
+    fiscal_year: "2022"
     files:
-      - C:\Users\chris.hsu\Documents\TCC_2024_Annual_Report.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/111年度年報及年報附冊.pdf
 
-  # ── 網站 / 爬蟲 ──────────────────────────────────────────
-  - type: url_list
-    category: ESG專區
-    fiscal_year: null
+  - type: pdf_list
+    category: 年度報告
     language: zh-TW
     group: 台泥企業團
-    urls:
-      - https://www.tcc.com.tw/esg/zh-tw
-      # 新增更多 URL 在此...
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/112年度年報及年報附冊.pdf
 
-  - type: sitemap
-    category: 官網
-    fiscal_year: null
+  - type: pdf_list
+    category: 年度報告
     language: zh-TW
     group: 台泥企業團
-    url: https://www.tcc.com.tw/sitemap.xml
-    max_pages: 300
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/113年度年報及年報附冊.pdf
 
-  - type: crawler
-    category: 新聞
-    fiscal_year: null
+  # ── 財務報告 ────────────────────────────────────────────────
+  - type: pdf_list
+    category: 財務報告
     language: zh-TW
     group: 台泥企業團
-    url: https://www.tcc.com.tw/news/zh-tw
-    max_depth: 2
-    max_pages: 200
+    company: 台泥
+    fiscal_year: "2025"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/財報/中/114 第一季合併財報.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/財報/中/114 第二季合併財報.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/財報/中/114第三季合併財報.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/財報/中/114第四季合併財報.pdf
+
+  # ── 其他（中文）— 台泥 ─────────────────────────────────────
+  - type: pdf_list
+    category: 其他
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/2023 TNFD Report.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/2024年人權暨環境盡職調查報告.pdf
+
+  - type: pdf_list
+    category: 其他
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2025"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/台泥公正轉型報告.pdf
+
+  # ── 其他（中文）— Molicel ──────────────────────────────────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: Molicel
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/Molicel 2022 ESG Report_中文版.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: Molicel
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/Molicel 2023 ESG Report_中文版.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: Molicel
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/中/Molicel 2024 ESG Report_中文版.pdf
+
+  # ── 其他（英文）— TCC ESG Insight ──────────────────────────
+  - type: pdf_list
+    category: 其他
+    language: en
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2021"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/英/TCC 2021 ESG Insight Report.pdf
+
+  - type: pdf_list
+    category: 其他
+    language: en
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/英/TCC 2022 ESG Insight Report.pdf
+
+  - type: pdf_list
+    category: 其他
+    language: en
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/英/TCC 2023 ESG Insight Report.pdf
+
+  - type: pdf_list
+    category: 其他
+    language: en
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/其他/英/TCC 2024 ESG Insight Report.pdf
+
+  # ── 公司政策文件（44 份，均 < 1 MB）───────────────────────
+  - type: pdf_list
+    category: 公司政策文件
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: null
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/不毀林承諾.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/人權政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/企業永續發展委員會組織規程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/供應商管理政策宣言.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/供應商行為守則_繁體中文版.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/個人資料保護及管理政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/內線交易防制辦法.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/內部稽核人員之任免、考核、薪資報酬辦法.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/內部重大資訊處理作業程序.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/公司章程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/公平交易及反托拉斯遵法準則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/利害關係人議合政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/反歧視、反騷擾與反霸凌政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/反貪腐與賄賂政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/取得或處分資產處理程序.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/台泥公司治理守則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/台泥審計委員會組織規程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/台泥董事會績效評估辦法.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/台泥董事會議事規範.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/客戶權益保護政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/提名委員會組織章程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/氣候相關公共參與與管理政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/水資源管理宣言.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/永續發展實務守則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/獨立董事之職責範疇規則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/環境保護政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/生物多樣性政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/職業安全衛生政策宣言.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/股東會議事規則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/股權政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/背書保證作業程序.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/董事選舉辦法.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/薪酬委員會組織規程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/處理董事要求之標準作業程序.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/誠信經營守則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/資安管理委員會組織規程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/資訊安全指導原則_台泥企業團.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/資金貸與他人作業程序.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/道德行為準則.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/違反從業道德行為檢舉制度.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/關係人交易暨監理政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/集團稅務政策.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/風險管理委員會組織規程.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/風險管理政策.pdf

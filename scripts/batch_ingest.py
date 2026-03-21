@@ -38,7 +38,7 @@ from supabase import create_client
 from modules.parser_url import UrlParser
 from modules.cleaner import MarkdownCleaner
 from modules.chunker import SemanticChunker
-from modules.crawler import WebCrawler
+from modules.crawler import SiteCrawler as WebCrawler
 from modules.exporter import SupabaseExporter
 from modules.uploader import Uploader
 
