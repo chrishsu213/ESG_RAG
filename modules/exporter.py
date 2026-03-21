@@ -109,14 +109,10 @@ class SupabaseExporter:
                 row["embedding"] = embeddings[i]
             rows.append(row)
 
-        # 批次寫入（Supabase 支援單次多列 insert）
-        result = (
-            self._client.table("document_chunks")
-            .insert(rows)
-            .execute()
-        )
+        # 批次寫入（returning=minimal 防 768 維向量序列化 → 502）
+        self._client.table("document_chunks").insert(rows, returning="minimal").execute()
 
-        count = len(result.data)
+        count = len(rows)  # minimal 不回傳 data，直接用輸入筆數
         print(f"[DB] 已寫入 document_chunks 表，共 {count} 筆 chunks")
         return count
 
@@ -161,7 +157,7 @@ class SupabaseExporter:
                 }
                 if emb:
                     row["embedding"] = emb
-                self._client.table("document_chunks").insert(row).execute()
+                self._client.table("document_chunks").insert(row, returning="minimal").execute()
                 total_parents += 1
                 continue
 
@@ -194,7 +190,7 @@ class SupabaseExporter:
                 child_rows.append(child_row)
 
             if child_rows:
-                self._client.table("document_chunks").insert(child_rows).execute()
+                self._client.table("document_chunks").insert(child_rows, returning="minimal").execute()
                 total_children += len(child_rows)
 
         print(f"[DB] Parent-Child 入庫完成：{total_parents} parents, {total_children} children")
