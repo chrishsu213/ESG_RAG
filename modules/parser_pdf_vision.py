@@ -286,7 +286,7 @@ class VisionPdfParser:
                                     data=img_bytes,
                                     mime_type="image/png",
                                 ),
-                                types.Part.from_text(self._VISION_PROMPT),
+                                types.Part(text=self._VISION_PROMPT),
                             ],
                         )
                     ],

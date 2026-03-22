@@ -103,13 +103,23 @@ def _ingest_one_pdf(
             pct = int(current / total * 100) if total else 0
             print(f"    [{mode}] 第 {current}/{total} 頁 ({pct}%)", end="\r", flush=True)
 
-        parser = VisionPdfParser(on_progress=_on_pdf_progress)
+        # auto = 文字頁直接讀，圖表頁才送 Vision，更快更穩定
+        # (vision_pdf 在財報/政策等文字型 PDF 上容易卡住 Gemini API 連線)
+        parser = VisionPdfParser(mode="auto", on_progress=_on_pdf_progress)
         raw_md = parser.parse(file_path)
         print()  # 換行
         logger.info(f"  解析完成：{parser.stats['total_pages']} 頁")
 
         logger.info("  清洗中...")
-        cleaned_md = MarkdownCleaner().clean(raw_md)
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout
+        try:
+            with ThreadPoolExecutor(max_workers=1) as _ex:
+                _f = _ex.submit(MarkdownCleaner().clean, raw_md)
+                cleaned_md = _f.result(timeout=30)  # 防止 regex backtracking 卡死
+        except _Timeout:
+            logger.warning("  [warn] 清洗逾時（>30s），略過清洗直接使用原始文字")
+            import re as _re
+            cleaned_md = _re.sub(r"\n{3,}", "\n\n", raw_md).strip()
 
         logger.info("  切割中...")
         chunker = SemanticChunker()
