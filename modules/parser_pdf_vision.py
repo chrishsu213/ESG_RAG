@@ -34,8 +34,8 @@ class VisionPdfParser:
     """
 
     _VISION_MODEL = "gemini-2.5-flash"  # Vertex AI GA 2.5
-    _MAX_RETRIES = 3
-    _RETRY_DELAY = 2.0
+    _MAX_RETRIES = 5
+    _RETRY_DELAY = 15.0  # 指數退避基數（秒）：15, 30, 60, 120, 120，共約 6 分鐘
     _BATCH_PAGE_LIMIT = 15  # 整份 PDF 上傳時，每批最多頁數
 
     _VISION_PROMPT = """你是一位專業的文件數位化專家。請將此 PDF 頁面的所有內容轉換為結構化的 Markdown 格式。
@@ -261,7 +261,8 @@ class VisionPdfParser:
                 last_error = e
                 if self._on_progress:
                     self._on_progress(0, 0, f"重試中... ({e})")
-                _time.sleep(self._RETRY_DELAY * attempt)
+                delay = min(self._RETRY_DELAY * (2 ** (attempt - 1)), 120)  # 指數退避，最長 120s
+                _time.sleep(delay)
 
         raise RuntimeError(f"PDF 第 {page_start}-{page_end} 頁解析失敗：{last_error}")
 
