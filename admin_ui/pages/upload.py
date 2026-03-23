@@ -86,11 +86,19 @@ def render(client):
             key="upload_group_label",
         )
     with col_cat:
-        upload_category = st.selectbox(
+        _custom_cat_label = "✏️ 自訂分類..."
+        _cat_sel = st.selectbox(
             "📁 文件分類",
-            CATEGORY_GROUPS[group_label],
+            CATEGORY_GROUPS.get(group_label, []) + [_custom_cat_label],
             key="upload_category",
         )
+        if _cat_sel == _custom_cat_label:
+            upload_category = st.text_input(
+                "自訂分類名稱", key="upload_category_custom",
+                placeholder="例：TCFD報告、TNFD報告"
+            )
+        else:
+            upload_category = _cat_sel
 
     # ── 第二行：顯示名稱 + 所屬報告 ───────────────────────
     col_name, col_rg = st.columns(2)
