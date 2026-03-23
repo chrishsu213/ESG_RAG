@@ -80,11 +80,19 @@ def render(client):
     # ── 第一行：類別群組 → 細分類 ─────────────────────────
     col_grp_sel, col_cat = st.columns(2)
     with col_grp_sel:
-        group_label = st.selectbox(
+        _custom_grp_label = "✏️ 自訂群組..."
+        _grp_sel = st.selectbox(
             "📂 類別群組",
-            list(CATEGORY_GROUPS.keys()),
+            list(CATEGORY_GROUPS.keys()) + [_custom_grp_label],
             key="upload_group_label",
         )
+        if _grp_sel == _custom_grp_label:
+            group_label = st.text_input(
+                "自訂群組名稱", key="upload_group_label_custom",
+                placeholder="例：法規遵循、永續框架"
+            )
+        else:
+            group_label = _grp_sel
     with col_cat:
         _custom_cat_label = "✏️ 自訂分類..."
         _cat_sel = st.selectbox(
