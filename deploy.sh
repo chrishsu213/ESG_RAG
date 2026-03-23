@@ -49,7 +49,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --min-instances 0 \
     --max-instances 3 \
     --set-env-vars "ENV=production" \
-    --set-secrets "SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,RAG_API_KEY=RAG_API_KEY:latest" \
+    --set-secrets "SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,RAG_API_KEYS=RAG_API_KEY:latest" \
     --quiet
 
 # 取得服務 URL
