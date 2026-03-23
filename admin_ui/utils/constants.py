@@ -3,14 +3,17 @@ admin_ui/utils/constants.py
 UI 選項常數 — 統一管理下拉選單選項清單。
 """
 
-# ── 分類：三大群組 ──────────────────────────────────────────
+# ── 分類：四大群組 ──────────────────────────────────────────
 CATEGORY_GROUPS: dict[str, list[str]] = {
-    "報告": [
+    "永續相關報告": [
         "永續報告書",
-        "年度報告",
-        "財務報告",
         "法說會簡報",
         "公司政策文件",
+    ],
+    "財務相關報告": [
+        "年度報告",
+        "財務報告",
+        "TCFD報告",
     ],
     "網站": [
         "官網",
@@ -31,7 +34,7 @@ CATEGORY_GROUPS: dict[str, list[str]] = {
 CATEGORY_OPTIONS: list[str] = [c for cats in CATEGORY_GROUPS.values() for c in cats]
 
 # 需要顯示「季度」選單的分類
-CATEGORY_WITH_QUARTER: set[str] = {"財務報告", "法說會簡報"}
+CATEGORY_WITH_QUARTER: set[str] = {"財務報告", "TCFD報告"}
 
 # 需要顯示「發布日期」的分類（時效性內容）
 CATEGORY_WITH_PUBLISH_DATE: set[str] = {"新聞", "電子報"}
