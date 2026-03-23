@@ -118,6 +118,7 @@ class RagChat:
         category: Optional[str] = None,
         source: str = "api",
     ) -> dict[str, Any]:
+        """RAG 問答：搜尋相關 chunks → Re-ranking → Gemini 生成含引用答案。"""
         # 1) 搜尋相關 chunks
         results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company, category=category)
 
