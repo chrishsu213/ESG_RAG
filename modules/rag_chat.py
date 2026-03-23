@@ -115,35 +115,11 @@ class RagChat:
         fiscal_year: Optional[str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
+        category: Optional[str] = None,
         source: str = "api",
     ) -> dict[str, Any]:
-        """
-        RAG 問答。
-
-        Parameters
-        ----------
-        question : str
-            使用者的問題。
-        history : list[dict] | None
-            對話歷史，每個 dict 包含 role ("user"/"assistant") 和 content。
-        search_mode : str
-            "hybrid" 或 "hybrid_rerank"。
-        top_k : int
-            搜尋結果數量。
-        language : str | None
-            限制搜尋語言（如 "en"），None 則不限。
-        fiscal_year : str | None
-            限制會計年度（如 "2024"），None 則不限。
-
-        Returns
-        -------
-        dict
-            - answer: str (AI 生成的答案)
-            - sources: list[dict] (引用的來源資訊)
-            - search_results: list[dict] (原始搜尋結果)
-        """
         # 1) 搜尋相關 chunks
-        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company, category=category)
 
         # 2) Re-ranking 精排（全面啟用）
         if results:
@@ -294,6 +270,7 @@ class RagChat:
         fiscal_year: Optional[str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
+        category: Optional[str] = None,
         source: str = "admin_ui",
     ) -> dict[str, Any]:
         """
@@ -303,7 +280,7 @@ class RagChat:
         - stream: Generator[str] (逐 token 產出答案文字)
         """
         # 1) 搜尋相關 chunks（同步完成）
-        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company)
+        results = self._retriever.hybrid_search(question, top_k=top_k * 2, language=language, fiscal_year=fiscal_year, group=group, company=company, category=category)
 
         # Re-ranking 精排（全面啟用）
         if results:

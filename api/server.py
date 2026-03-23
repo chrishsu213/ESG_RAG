@@ -76,6 +76,7 @@ class SearchRequest(BaseModel):
     use_hybrid: bool = Field(True, description="是否使用混合搜尋")
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'、'zh-TW'），Null 則不限")
     fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
+    category: Optional[str] = Field(None, description="限制文件分類（如 '永續報告書'、'財務報告'），Null 則不限")
     group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
     company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
 
@@ -89,6 +90,7 @@ class AskRequest(BaseModel):
     )
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'），Null 則不限")
     fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
+    category: Optional[str] = Field(None, description="限制文件分類（如 '永續報告書'、'財務報告'），Null 則不限")
     group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
     company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
     history: Optional[list[dict]] = Field(
@@ -260,13 +262,13 @@ def search(req: SearchRequest, _=Depends(verify_api_key)):
             results = retriever.hybrid_search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
                 language=req.language, fiscal_year=req.fiscal_year,
-                group=req.group, company=req.company,
+                group=req.group, company=req.company, category=req.category,
             )
         else:
             results = retriever.search(
                 req.query, top_k=req.top_k, threshold=req.threshold,
                 language=req.language, fiscal_year=req.fiscal_year,
-                group=req.group, company=req.company,
+                group=req.group, company=req.company, category=req.category,
             )
 
         items = []
@@ -316,6 +318,7 @@ def ask(req: AskRequest, _=Depends(verify_api_key)):
             fiscal_year=req.fiscal_year,
             group=req.group,
             company=req.company,
+            category=req.category,
             source="api",
         )
         return AskResponse(
@@ -353,6 +356,7 @@ def ask_stream(req: AskRequest, _=Depends(verify_api_key)):
                 fiscal_year=req.fiscal_year,
                 group=req.group,
                 company=req.company,
+                category=req.category,
                 source="api_stream",
             )
 
@@ -427,6 +431,39 @@ def ask_compare(req: CompareRequest, _=Depends(verify_api_key)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/filters")
+def get_filters(_=Depends(verify_api_key)):
+    """回傳目前知識庫中實際存在的可用篹選值。
+
+    外部 App 可用此端點動態建立下拉選單，不需硬寫分類。
+    """
+    client = get_supabase()
+    try:
+        docs = client.table("documents").select(
+            "category, fiscal_year, language, group, company"
+        ).execute()
+        data = docs.data or []
+
+        categories = sorted({d["category"] for d in data if d.get("category")})
+        fiscal_years = sorted(
+            {d["fiscal_year"] for d in data if d.get("fiscal_year")},
+            reverse=True,
+        )
+        languages = sorted({d["language"] for d in data if d.get("language")})
+        groups = sorted({d["group"] for d in data if d.get("group")})
+        companies = sorted({d["company"] for d in data if d.get("company")})
+
+        return {
+            "categories": categories,
+            "fiscal_years": fiscal_years,
+            "languages": languages,
+            "groups": groups,
+            "companies": companies,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/documents", response_model=DocumentListResponse)
