@@ -21,8 +21,9 @@ _CAT_TO_GROUP: dict[str, str] = {
 _PAGE_SIZE = 20
 
 
-def _doc_list(client, cat_df: pd.DataFrame, page_key: str) -> None:
+def _doc_list(client, cat_df: pd.DataFrame, page_key: str, all_db_cats: list[str] = None) -> None:
     """顯示單一子分類的文件列表（含分頁）。"""
+    all_db_cats = all_db_cats or []
     total = len(cat_df)
     if total == 0:
         return
@@ -62,8 +63,7 @@ def _doc_list(client, cat_df: pd.DataFrame, page_key: str) -> None:
             with st.popover("✏️", help="編輯 Metadata"):
                 st.markdown(f"**{doc_name}**")
                 p_name = st.text_input("顯示名稱", value=doc_name, key=f"p_name_{doc_id}")
-                _all_db_cats = sorted(df["category"].dropna().unique().tolist())
-                _allowed_cats = sorted(set(CATEGORY_OPTIONS + _all_db_cats))
+                _allowed_cats = sorted(set(CATEGORY_OPTIONS + all_db_cats))
                 p_cat = st.selectbox(
                     "分類", _allowed_cats,
                     index=_allowed_cats.index(row["category"]) if row["category"] in _allowed_cats else 0,
@@ -282,5 +282,5 @@ def render(client):
                 with tab:
                     cat_df = grp_df[grp_df["category"] == cat].copy()
                     st.caption(f"{len(cat_df)} 份文件")
-                    _doc_list(client, cat_df, page_key=f"{grp_label}_{cat}")
+                    _doc_list(client, cat_df, page_key=f"{grp_label}_{cat}", all_db_cats=_all_db_cats)
 
