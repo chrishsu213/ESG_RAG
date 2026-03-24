@@ -95,9 +95,14 @@ class SemanticRetriever:
         """純向量語義搜尋（使用 match_chunks RPC）。"""
         query_embedding = self._embed_query(query)
         query_embedding = [float(v) for v in query_embedding]
-        # 統一正規化為 List[str]（相容舊版單值字串呼叫）
-        fy_list = ([fiscal_year] if isinstance(fiscal_year, str) else fiscal_year) or None
-        cat_list = ([category] if isinstance(category, str) else category) or None
+        # 🛡️ 修復：防呆轉型 (PostgREST 不吃單一數字或字串，必須強制轉 List[str] 給 TEXT[])
+        def _to_str_list(v):
+            if v is None: return None
+            if isinstance(v, list): return [str(x) for x in v]
+            return [str(v)]
+
+        fy_list = _to_str_list(fiscal_year)
+        cat_list = _to_str_list(category)
         params = {
             "query_embedding": query_embedding,
             "match_count": top_k,
@@ -137,9 +142,14 @@ class SemanticRetriever:
         """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。"""
         if threshold is None:
             threshold = self._rag_config.get("hybrid_threshold", float)
-        # 統一正規化為 List[str]
-        fy_list = ([fiscal_year] if isinstance(fiscal_year, str) else fiscal_year) or None
-        cat_list = ([category] if isinstance(category, str) else category) or None
+        # 🛡️ 修復：防呆轉型 (PostgREST 不吃單一數字或字串，必須強制轉 List[str] 給 TEXT[])
+        def _to_str_list(v):
+            if v is None: return None
+            if isinstance(v, list): return [str(x) for x in v]
+            return [str(v)]
+
+        fy_list = _to_str_list(fiscal_year)
+        cat_list = _to_str_list(category)
 
         queries = [query]
         if expand_query:
