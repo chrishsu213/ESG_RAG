@@ -9,7 +9,7 @@ from admin_ui.utils.constants import (
     STATUS_OPTIONS, FISCAL_YEAR_OPTIONS,
 )
 from admin_ui.utils.db import (
-    fetch_documents, delete_document, fetch_chunks_for_document,
+    fetch_documents, delete_document, fetch_chunks_for_document, get_custom_category_groups,
 )
 
 _CAT_TO_GROUP: dict[str, str] = {
@@ -62,9 +62,11 @@ def _doc_list(client, cat_df: pd.DataFrame, page_key: str) -> None:
             with st.popover("✏️", help="編輯 Metadata"):
                 st.markdown(f"**{doc_name}**")
                 p_name = st.text_input("顯示名稱", value=doc_name, key=f"p_name_{doc_id}")
+                _all_db_cats = sorted(df["category"].dropna().unique().tolist())
+                _allowed_cats = sorted(set(CATEGORY_OPTIONS + _all_db_cats))
                 p_cat = st.selectbox(
-                    "分類", CATEGORY_OPTIONS,
-                    index=CATEGORY_OPTIONS.index(row["category"]) if row["category"] in CATEGORY_OPTIONS else 0,
+                    "分類", _allowed_cats,
+                    index=_allowed_cats.index(row["category"]) if row["category"] in _allowed_cats else 0,
                     key=f"p_cat_{doc_id}",
                 )
                 _yr_opts = ["（不填）"] + FISCAL_YEAR_OPTIONS
@@ -207,9 +209,10 @@ def render(client):
             "語言", ["全部"] + sorted(df["language"].unique().tolist()),
             key="filter_lang",
         )
+    _all_db_cats = sorted(df["category"].dropna().unique().tolist())
     with f2:
         filter_cat = st.selectbox(
-            "分類", ["全部"] + CATEGORY_OPTIONS,
+            "分類", ["全部", "未分類"] + _all_db_cats,
             key="filter_cat",
         )
     with f3:
@@ -223,7 +226,10 @@ def render(client):
     if filter_lang != "全部":
         filtered_df = filtered_df[filtered_df["language"] == filter_lang]
     if filter_cat != "全部":
-        filtered_df = filtered_df[filtered_df["category"] == filter_cat]
+        if filter_cat == "未分類":
+            filtered_df = filtered_df[filtered_df["category"].isna()]
+        else:
+            filtered_df = filtered_df[filtered_df["category"] == filter_cat]
     if filter_company != "全部":
         filtered_df = filtered_df[
             (filtered_df["group"] == filter_company) |
@@ -233,13 +239,39 @@ def render(client):
     st.caption(f"顯示 {len(filtered_df)} / {len(df)} 份文件")
     st.divider()
 
-    # ── 3 個群組 Expander（預設折疊）──────────────────────────
-    for grp_label, grp_cats in CATEGORY_GROUPS.items():
+    # ── 3 個群組 Expander（包含動態新增的自訂分類）────────────────
+    
+    # 從資料庫拉取 UI 動態新增的群組對應表
+    custom_groups = get_custom_category_groups(client)
+    
+    # 合併 constants.py 裡的預設群組與 DB 裡的自訂群組
+    dynamic_groups = {}
+    for g, cats in CATEGORY_GROUPS.items():
+        dynamic_groups[g] = list(cats)
+    
+    for g, cats in custom_groups.items():
+        if g not in dynamic_groups:
+            dynamic_groups[g] = []
+        for c in cats:
+            if c not in dynamic_groups[g]:
+                dynamic_groups[g].append(c)
+
+    # 找出還是沒有歸屬的「孤兒分類」（例如舊資料或透過腳本直接打入庫的）
+    known_cats = set(c for cats in dynamic_groups.values() for c in cats)
+    db_cats = set(filtered_df["category"].dropna().unique())
+    unknown_cats = sorted(db_cats - known_cats)
+    
+    # 把自訂分類裝進一個專屬的「未定義分類群組」面版
+    if unknown_cats:
+        dynamic_groups["📁 其他未定義分類"] = unknown_cats
+
+    for grp_label, grp_cats in dynamic_groups.items():
         grp_df = filtered_df[filtered_df["category"].isin(grp_cats)]
         if grp_df.empty:
             continue
 
-        with st.expander(f"{grp_label}（{len(grp_df)} 份）", expanded=False):
+        _is_unmapped = (grp_label == "📁 其他未定義分類")
+        with st.expander(f"{grp_label}（{len(grp_df)} 份）", expanded=_is_unmapped):
             # 只顯示有資料的子分類 Tab
             available_cats = [cat for cat in grp_cats if not grp_df[grp_df["category"] == cat].empty]
             if not available_cats:

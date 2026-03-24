@@ -61,3 +61,32 @@ def fetch_system_stats(client) -> tuple[int, int]:
     doc_res   = client.table("documents").select("id", count="exact").execute()
     chunk_res = client.table("document_chunks").select("id", count="exact").execute()
     return doc_res.count, chunk_res.count
+
+def get_custom_category_groups(client) -> dict[str, list[str]]:
+    """從 rag_config 取得使用者自訂的「群組對應表 (UI Group -> [categories])」"""
+    try:
+        res = client.table("rag_config").select("value").eq("key", "custom_category_groups").execute()
+        if res.data:
+            import json
+            return json.loads(res.data[0]["value"])
+    except Exception:
+        pass
+    return {}
+
+def add_custom_category(client, group_label: str, category: str) -> None:
+    """使用者在新上傳時自創分類或群組，將其記錄到 rag_config，保證它能在 doc_mgmt 中被畫出來"""
+    import json
+    groups = get_custom_category_groups(client)
+    if group_label not in groups:
+        groups[group_label] = []
+    
+    if category not in groups[group_label]:
+        groups[group_label].append(category)
+        try:
+            client.table("rag_config").upsert({
+                "key": "custom_category_groups",
+                "value": json.dumps(groups, ensure_ascii=False),
+                "note": "UI 自訂類別群組對應表 (由 upload.py 動態寫入)"
+            }).execute()
+        except Exception as e:
+            print(f"Failed to save custom category group: {e}")

@@ -20,6 +20,7 @@ from modules.parser_pdf_vision import VisionPdfParser
 from modules.proofreader import AiProofreader
 from modules.parser_audio import AudioParser
 from modules.embedder import GeminiEmbedder
+from admin_ui.utils.db import add_custom_category
 from admin_ui.utils.constants import (
     CATEGORY_GROUPS, CATEGORY_OPTIONS, CATEGORY_WITH_QUARTER, CATEGORY_WITH_PUBLISH_DATE,
     LANGUAGE_OPTIONS, FISCAL_YEAR_OPTIONS,
@@ -186,16 +187,16 @@ def render(client):
             horizontal=True, key="upload_mode",
         )
         if upload_mode == "single":
-            _render_single_upload(client, upload_category, upload_display_name, upload_report_group,
+            _render_single_upload(client, group_label, upload_category, upload_display_name, upload_report_group,
                                   upload_group, upload_company, upload_fiscal_period,
                                   upload_fiscal_year, upload_language, upload_publish_date)
         else:
-            _render_batch_upload(client, upload_category, upload_display_name, upload_report_group,
+            _render_batch_upload(client, group_label, upload_category, upload_display_name, upload_report_group,
                                  upload_group, upload_company,
                                  upload_fiscal_year, upload_language, upload_publish_date)
 
     with sub_tab2:
-        _render_web_crawler(client, upload_category, upload_display_name,
+        _render_web_crawler(client, group_label, upload_category, upload_display_name,
                             upload_report_group, upload_group, upload_company,
                             upload_fiscal_year, upload_language, upload_publish_date)
 
@@ -206,7 +207,7 @@ def render(client):
 # ──────────────────────────────────────────────────────────
 # 私用 ─ 單檔 PDF/DOCX 入庫
 # ──────────────────────────────────────────────────────────
-def _render_single_upload(client, category, display_name, report_group,
+def _render_single_upload(client, group_label, category, display_name, report_group,
                           group, company, fiscal_period,
                           fiscal_year="", language="", publish_date=""):
     uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"], key="single_uploader")
@@ -365,6 +366,9 @@ def _render_single_upload(client, category, display_name, report_group,
                         publish_date=publish_date if publish_date else None,
                     )
                     p_cnt, c_cnt = exporter.insert_parent_child_chunks(doc_id, parent_child_list, child_embeddings_map)
+                    
+                    add_custom_category(client, group_label, category)
+                    
                     progress.progress(100, text="完成！")
                     group_info = f" [報告: {rg}]" if rg else ""
                     st.success(f"✅ 入庫成功：**{final_name}**{group_info} ({p_cnt} parents, {c_cnt} children)")
@@ -379,7 +383,7 @@ def _render_single_upload(client, category, display_name, report_group,
 # ──────────────────────────────────────────────────────────
 # 私用 ─ 批次 PDF/DOCX 入庫
 # ──────────────────────────────────────────────────────────
-def _render_batch_upload(client, category, display_name, report_group, group, company,
+def _render_batch_upload(client, group_label, category, display_name, report_group, group, company,
                          fiscal_year="", language="", publish_date=""):
     st.info("📦 批次模式：一次上傳多個 PDF / DOCX 檔案，系統將自動依序處理。")
 
@@ -432,6 +436,9 @@ def _render_batch_upload(client, category, display_name, report_group, group, co
                     publish_date=publish_date if publish_date else None,
                 )
                 exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
+                
+                add_custom_category(client, group_label, category)
+                
                 success_count += 1
                 results_container.success(f"✅ {file_label} — {len(chunks)} 段已入庫")
             except Exception as e:
@@ -453,7 +460,7 @@ def _render_batch_upload(client, category, display_name, report_group, group, co
 # ──────────────────────────────────────────────────────────
 # 私用 ─ 網頁爬蟲
 # ──────────────────────────────────────────────────────────
-def _render_web_crawler(client, category, display_name, report_group, group, company,
+def _render_web_crawler(client, group_label, category, display_name, report_group, group, company,
                         fiscal_year="", language="", publish_date=""):
     web_mode = st.radio(
         "匯入方式",
@@ -470,6 +477,7 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
                     ok, msg = _process_url(client, url_input, category, display_name, report_group, group, company,
                                           fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                     if ok:
+                        add_custom_category(client, group_label, category)
                         st.success(f"✅ 入庫成功：{msg}")
                     else:
                         st.warning(f"⚠️ {msg}")
@@ -520,6 +528,7 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
                                              fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                         if ok:
                             ok_n += 1
+                            add_custom_category(client, group_label, category)
                         else:
                             skip_n += 1
                     except Exception:
@@ -592,6 +601,7 @@ def _render_web_crawler(client, category, display_name, report_group, group, com
                                               fiscal_year=fiscal_year, language=language, publish_date=publish_date)
                         if ok:
                             ok_n += 1
+                            add_custom_category(client, group_label, category)
                         else:
                             skip_n += 1
                     except Exception as e:
