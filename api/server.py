@@ -18,12 +18,12 @@ import os
 import sys
 from contextlib import asynccontextmanager
 import logging
-from typing import Optional
+from typing import Optional, List, Literal
 
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # 確保上層模組可 import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,34 +69,81 @@ def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
 
 
 # ── Pydantic Models ──────────────────────────────────
+def _parse_str_to_list(v) -> Optional[List[str]]:
+    """統一轉換單值/逗號字串/年份範圍/陣列 → List[str] | None。
+    支援格式：
+      - None          → None（不過濾）
+      - "2024"        → ["2024"]
+      - "2022,2023"   → ["2022", "2023"]
+      - "2022-2024"   → ["2022", "2023", "2024"]
+      - ["2022"]      → ["2022"]（已是列表直接回傳）
+    """
+    if v is None:
+        return None
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if x]
+    if isinstance(v, str):
+        v = v.strip()
+        if not v:
+            return None
+        # 年份範圍格式：YYYY-YYYY（長度 9，中間 dash）
+        import re
+        if re.fullmatch(r'\d{4}-\d{4}', v):
+            start, end = int(v[:4]), int(v[5:])
+            return [str(y) for y in range(start, end + 1)]
+        # 逗號分隔
+        return [x.strip() for x in v.split(',') if x.strip()]
+    return [str(v)]
+
+
 class SearchRequest(BaseModel):
     query: str = Field(..., description="搜尋關鍵字或自然語言問題")
     top_k: int = Field(5, ge=1, le=20, description="回傳結果數量")
     threshold: float = Field(0.3, ge=0, le=1, description="最低相似度門檻")
     use_hybrid: bool = Field(True, description="是否使用混合搜尋")
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'、'zh-TW'），Null 則不限")
-    fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
-    category: Optional[str] = Field(None, description="限制文件分類（如 '永續報告書'、'財務報告'），Null 則不限")
+    fiscal_year: Optional[List[str]] = Field(None, description="年度過濾，可傳陣列 ['2022','2023']、逗號字串 '2022,2023' 或範圍 '2022-2024'")
+    category: Optional[List[str]] = Field(None, description="分類過濾，可傳陣列 ['財務報告','TCFD報告'] 或逗號字串")
     group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
     company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
+
+    @field_validator('fiscal_year', mode='before')
+    @classmethod
+    def parse_fiscal_year(cls, v):
+        return _parse_str_to_list(v)
+
+    @field_validator('category', mode='before')
+    @classmethod
+    def parse_category(cls, v):
+        return _parse_str_to_list(v)
 
 
 class AskRequest(BaseModel):
     question: str = Field(..., description="使用者問題")
     top_k: int = Field(5, ge=1, le=15, description="參考段落數量")
-    search_mode: str = Field(
+    search_mode: Literal["hybrid", "hybrid_rerank"] = Field(
         "hybrid",
-        description="搜尋模式：'hybrid' 或 'hybrid_rerank'"
+        description="搜尋模式：'hybrid'（推薦）或 'hybrid_rerank'"
     )
     language: Optional[str] = Field(None, description="限制搜尋語言（如 'en'），Null 則不限")
-    fiscal_year: Optional[str] = Field(None, description="限制會計年度（如 '2024'），Null 則不限")
-    category: Optional[str] = Field(None, description="限制文件分類（如 '永續報告書'、'財務報告'），Null 則不限")
+    fiscal_year: Optional[List[str]] = Field(None, description="年度過濾，可傳陣列 ['2022','2023']、逗號字串 '2022,2023' 或範圍 '2022-2024'")
+    category: Optional[List[str]] = Field(None, description="分類過濾，可傳陣列 ['財務報告','TCFD報告'] 或逗號字串")
     group: Optional[str] = Field(DEFAULT_GROUP, description="集團篩選（預設台泥企業團），傳 null 搜全部")
     company: Optional[str] = Field(None, description="子公司篩選，Null 則不限")
     history: Optional[list[dict]] = Field(
         None,
         description="對話歷史，格式 [{role: 'user'|'assistant', content: '...'}]"
     )
+
+    @field_validator('fiscal_year', mode='before')
+    @classmethod
+    def parse_fiscal_year(cls, v):
+        return _parse_str_to_list(v)
+
+    @field_validator('category', mode='before')
+    @classmethod
+    def parse_category(cls, v):
+        return _parse_str_to_list(v)
 
 
 class SearchResult(BaseModel):
@@ -149,7 +196,7 @@ class CompareRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     question: str = Field(..., description="使用者的問題")
     answer: str = Field(..., description="AI 生成的回答")
-    rating: int = Field(..., ge=1, le=5, description="評分 1~5 星")
+    rating: str = Field(..., pattern="^(up|down)$", description="評分：'up' 或 'down'")
     comment: Optional[str] = Field(None, description="文字回饋（可選）")
     session_id: Optional[str] = Field(None, description="外部 App 的 Session ID（可選）")
     source: Optional[str] = Field("api", description="來源 App，如 line_bot、web、api")
@@ -498,8 +545,20 @@ def list_documents(
         if source_type:
             query = query.eq("source_type", source_type)
 
-        all_res = query.execute()
-        total = len(all_res.data or [])
+        # 獨立 count 查詢（避免覆蓋原始 query 的 select 欄位）
+        count_query = client.table("documents").select("id", count="exact")
+        if category:
+            count_query = count_query.eq("category", category)
+        if group:
+            count_query = count_query.eq("group", group)
+        if company:
+            count_query = count_query.eq("company", company)
+        if fiscal_year:
+            count_query = count_query.eq("fiscal_year", fiscal_year)
+        if source_type:
+            count_query = count_query.eq("source_type", source_type)
+        total = (count_query.execute().count or 0)
+
         paged = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
         return DocumentListResponse(

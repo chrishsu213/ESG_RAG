@@ -97,10 +97,14 @@ class DocumentIngestionPipeline:
         category: str = "其他",
         display_name: str = "",
         report_group: Optional[str] = None,
+        group: Optional[str] = None,
+        company: Optional[str] = None,
+        fiscal_year: Optional[str] = None,
         language: Optional[str] = None,
         do_embed: bool = True,
         page_offset: int = 0,
-        chunk_strategy: str = "flat",  # 'flat' 或 'parent_child'
+        chunk_strategy: str = "parent_child",
+        vision_mode: str = "auto",  # 'auto' | 'vision' | 'text'
     ) -> IngestionResult:
         """
         執行完整的入庫 Pipeline。
@@ -142,14 +146,22 @@ class DocumentIngestionPipeline:
 
         # 2) 解析
         self._progress("parse", f"解析中 ({source_type})...")
-        parser_cls = self._PARSERS.get(source_type)
-        if parser_cls is None:
-            return IngestionResult(
-                success=False,
-                message=f"不支援的格式：{source_type}",
+        if source_type == "pdf" and vision_mode != "text":
+            # PDF 走 Vision 引擎（高品質）
+            from modules.parser_pdf_vision import VisionPdfParser
+            vision_parser = VisionPdfParser(
+                mode=vision_mode,
+                on_progress=lambda cur, tot, msg: self._progress("parse", f"{msg} ({cur}/{tot})"),
             )
-
-        raw_md = parser_cls().parse(actual_source)
+            raw_md = vision_parser.parse(actual_source)
+        else:
+            parser_cls = self._PARSERS.get(source_type)
+            if parser_cls is None:
+                return IngestionResult(
+                    success=False,
+                    message=f"不支援的格式：{source_type}",
+                )
+            raw_md = parser_cls().parse(actual_source)
 
         # 3) 清洗
         self._progress("clean", "清洗中...")
@@ -211,18 +223,14 @@ class DocumentIngestionPipeline:
                 category=category,
                 display_name=final_name,
                 report_group=report_group if report_group else None,
+                group=group,
+                company=company,
+                fiscal_year=fiscal_year,
+                language=language,
             )
             p_cnt, c_cnt = exporter.insert_parent_child_chunks(
                 doc_id, parent_child_list, child_embeddings_map
             )
-
-            if language:
-                try:
-                    self._client.table("documents").update(
-                        {"language": language}
-                    ).eq("id", doc_id).execute()
-                except Exception:
-                    pass
 
             self._progress("done", f"完成！{final_name} ({p_cnt} parents, {c_cnt} children)")
             return IngestionResult(
@@ -271,16 +279,12 @@ class DocumentIngestionPipeline:
                 category=category,
                 display_name=final_name,
                 report_group=report_group if report_group else None,
+                group=group,
+                company=company,
+                fiscal_year=fiscal_year,
+                language=language,
             )
             exporter.insert_chunks(doc_id, chunks, embeddings=embeddings)
-
-            if language:
-                try:
-                    self._client.table("documents").update(
-                        {"language": language}
-                    ).eq("id", doc_id).execute()
-                except Exception:
-                    pass
 
             self._progress("done", f"完成！{final_name} ({len(chunks)} 段)")
             return IngestionResult(

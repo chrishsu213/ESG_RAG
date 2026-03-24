@@ -128,8 +128,8 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `threshold` | float | ❌ | 0.3 | 最低相似度門檻 (0-1) |
 | `use_hybrid` | bool | ❌ | true | 是否使用混合搜尋 |
 | `language` | string | ❌ | null | 語言篩選（`zh-TW` / `en`），null 則不限 |
-| `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
-| `category` | string | ❌ | null | **🆕 文件分類篩選**（如 `"財務報告"`、`"TCFD報告"`），null 則不限 |
+| `fiscal_year` | string \| array | ❌ | null | 年度篩選，支援：單值 `"2024"`、逗號 `"2022,2023"`、範圍 `"2022-2024"`、陣列 `["2022","2023"]`，null 則不限 |
+| `category` | string \| array | ❌ | null | **分類篩選**，支援：單值 `"財務報告"`、逗號 `"財務報告,TCFD報告"`、陣列 `["財務報告","TCFD報告"]`，null 則不限 |
 | `group` | string | ❌ | `"台泥企業團"` | 集團篩選，預設台泥企業團。傳 `null` 搜全部集團 |
 | `company` | string | ❌ | null | 子公司篩選，null 則不限 |
 
@@ -141,7 +141,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 }
 ```
 
-**篩選特定分類 + 年度**：
+**篩選特定分類 + 年度（單值）**：
 ```json
 {
   "query": "營收表現",
@@ -150,11 +150,19 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 }
 ```
 
-**搜尋 TCFD 相關內容**：
+**🆕 跨年度比較**：
 ```json
 {
-  "query": "氣候風險揭露",
-  "category": "TCFD報告"
+  "query": "碳排放目標進展",
+  "fiscal_year": "2022-2024"
+}
+```
+
+**🆕 多分類同時搜尋**：
+```json
+{
+  "query": "氣候風險",
+  "category": ["TCFD報告", "永續報告書"]
 }
 ```
 
@@ -207,8 +215,8 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `search_mode` | string | ❌ | `"hybrid"` | `"hybrid"`（推薦）或 `"hybrid_rerank"` |
 | `history` | array | ❌ | null | 對話歷史 |
 | `language` | string | ❌ | null | 語言篩選 |
-| `fiscal_year` | string | ❌ | null | 會計年度篩選（如 `"2024"`），null 則不限 |
-| `category` | string | ❌ | null | **🆕 文件分類篩選**（如 `"財務報告"`），null 則不限 |
+| `fiscal_year` | string \| array | ❌ | null | 年度篩選，支援單值、逗號、範圍、陣列（同 `/api/search`） |
+| `category` | string \| array | ❌ | null | **分類篩選**，支援單值、逗號、陣列（同 `/api/search`） |
 | `group` | string | ❌ | `"台泥企業團"` | 集團篩選 |
 | `company` | string | ❌ | null | 子公司篩選 |
 
@@ -373,7 +381,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 | `category` | 文件類別 | `永續報告書` |
 | `group` | 集團 | `台泥企業團` |
 | `company` | 子公司 | `台泥儲能` |
-| `fiscal_year` | 年度 | `2023` |
+| `fiscal_year` | 年度（**單值**，如 `2023`；不支援多值，請分次查詢） | `2023` |
 | `source_type` | 來源類型 | `pdf` / `web` |
 | `limit` | 每頁筆數（預設 50） | `20` |
 | `offset` | 分頁起始（預設 0） | `40` |
@@ -414,7 +422,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 |------|------|------|------|
 | `question` | string | ✅ | 使用者的問題 |
 | `answer` | string | ✅ | AI 回答 |
-| `rating` | int | ✅ | 1~5 星評分 |
+| `rating` | string | ✅ | `"up"` 或 `"down"` |
 | `comment` | string? | ❌ | 文字回饋 |
 | `session_id` | string? | ❌ | 外部 App 的 Session ID |
 | `source` | string? | ❌ | 來源（`line_bot` / `web` / `api`） |
@@ -424,7 +432,7 @@ X-API-Key: b6uFgdcxPyZdujgk3SyG1NGKc6d18DLy
 {
   "question": "台泥的碳中和目標是什麼？",
   "answer": "根據台泥 2023 年報...",
-  "rating": 5,
+  "rating": "up",
   "comment": "回答很完整",
   "source": "line_bot"
 }
@@ -618,9 +626,14 @@ adjusted_score = similarity × 0.60 + year_score × 0.25 + source_weight × 0.15
 | 參數 | 預設值 | 行為 |
 |------|--------|------|
 | `category` | `null` | 不限分類（搜全部文件類型） |
-| `category: "永續報告書"` | 指定值 | 只搜永續報告書 |
-| `category: "TCFD報告"` | 指定值 | 只搜 TCFD 氣候報告 |
+| `category: "永續報告書"` | 單值 | 只搜永續報告書 |
+| `category: "TCFD報告,永續報告書"` | 逗號字串 | 搜 TCFD 或永續報告書 |
+| `category: ["TCFD報告", "永續報告書"]` | 陣列 | 同上，標準陣列格式 |
 | `fiscal_year` | `null` | 不限年度 |
+| `fiscal_year: "2024"` | 單值 | 只搜 2024 年 |
+| `fiscal_year: "2022,2023"` | 逗號字串 | 搜 2022 或 2023 年 |
+| `fiscal_year: "2022-2024"` | 年份範圍 | 搜 2022、2023、2024 年 |
+| `fiscal_year: ["2022", "2023"]` | 陣列 | 同逗號格式，標準陣列 |
 | `group` | `"台泥企業團"` | 只搜台泥企業團的文件 |
 | `group: null` | 無篩選 | 搜尋所有集團（含同業） |
 | `company` | `null` | 不限子公司 |

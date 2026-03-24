@@ -9,7 +9,7 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -87,15 +87,17 @@ class SemanticRetriever:
         top_k: int = 5,
         threshold: float = 0.5,
         language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
+        fiscal_year: Optional[List[str] | str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
-        category: Optional[str] = None,
+        category: Optional[List[str] | str] = None,
     ) -> list[dict[str, Any]]:
         """純向量語義搜尋（使用 match_chunks RPC）。"""
         query_embedding = self._embed_query(query)
-        # 確保 embedding 是純 list[float]（防止 numpy/proto 型別問題）
         query_embedding = [float(v) for v in query_embedding]
+        # 統一正規化為 List[str]（相容舊版單值字串呼叫）
+        fy_list = ([fiscal_year] if isinstance(fiscal_year, str) else fiscal_year) or None
+        cat_list = ([category] if isinstance(category, str) else category) or None
         params = {
             "query_embedding": query_embedding,
             "match_count": top_k,
@@ -103,14 +105,14 @@ class SemanticRetriever:
         }
         if language:
             params["filter_language"] = language
-        if fiscal_year:
-            params["filter_fiscal_year"] = fiscal_year
+        if fy_list:
+            params["filter_fiscal_years"] = fy_list
         if group:
             params["filter_group"] = group
         if company:
             params["filter_company"] = company
-        if category:
-            params["filter_category"] = category
+        if cat_list:
+            params["filter_categories"] = cat_list
         try:
             result = self._client.rpc("match_chunks", params).execute()
         except Exception as e:
@@ -126,17 +128,19 @@ class SemanticRetriever:
         top_k: int = 5,
         threshold: Optional[float] = None,
         language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
+        fiscal_year: Optional[List[str] | str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
-        category: Optional[str] = None,
+        category: Optional[List[str] | str] = None,
         expand_query: bool = True,
     ) -> list[dict[str, Any]]:
         """向量 + 全文混合搜尋（使用 match_chunks_hybrid RPC）。"""
-        # 動態讀取 threshold（None 時從 rag_config 取）
         if threshold is None:
             threshold = self._rag_config.get("hybrid_threshold", float)
-        # 建立查詢清單（原始 + 展開）
+        # 統一正規化為 List[str]
+        fy_list = ([fiscal_year] if isinstance(fiscal_year, str) else fiscal_year) or None
+        cat_list = ([category] if isinstance(category, str) else category) or None
+
         queries = [query]
         if expand_query:
             expanded = self._expand_query(query)
@@ -146,7 +150,7 @@ class SemanticRetriever:
         seen_ids = set()
 
         def _fetch_single(q: str) -> list[dict]:
-            """單一查詢的檢索遏輯（用於平行執行）。"""
+            """單一查詢的檢索邏輯（用於平行執行）。"""
             q_embedding = self._embed_query(q)
             q_embedding = [float(v) for v in q_embedding]
             params = {
@@ -157,14 +161,14 @@ class SemanticRetriever:
             }
             if language:
                 params["filter_language"] = language
-            if fiscal_year:
-                params["filter_fiscal_year"] = fiscal_year
+            if fy_list:
+                params["filter_fiscal_years"] = fy_list
             if group:
                 params["filter_group"] = group
             if company:
                 params["filter_company"] = company
-            if category:
-                params["filter_category"] = category
+            if cat_list:
+                params["filter_categories"] = cat_list
             try:
                 return self._client.rpc("match_chunks_hybrid", params).execute().data or []
             except Exception as e:
@@ -183,15 +187,17 @@ class SemanticRetriever:
                                 seen_ids.add(rid)
                                 all_results.append(r)
                     except Exception as e:
-                        # RPC 不存在的錯誤必須往外拋，觸發降級機制
-                        if "match_chunks_hybrid" in str(e):
-                            raise
+                        # RPC 不存在 / schema mismatch → 往外拋觸發降級
+                        err_code = getattr(e, 'code', '') or getattr(e, 'status_code', '')
+                        if str(err_code) in ('42883', '404', '400'):
+                            raise  # PostgreSQL "function does not exist" 或 Supabase 404
                         # 其他錯誤（API 超時、Rate Limit）做隔離
                         failed_q = future_to_q[future]
                         logger.warning(f"[RETRIEVER] 子查詢 '{failed_q}' 檢索失敗，略過：{e}")
         except Exception as e:
-            if "match_chunks_hybrid" in str(e):
-                logger.info("[RETRIEVER] hybrid RPC 尚未建立，退回純向量搜尋")
+            err_code = getattr(e, 'code', '') or getattr(e, 'status_code', '')
+            if str(err_code) in ('42883', '404', '400'):
+                logger.info("[RETRIEVER] hybrid RPC 不可用，退回純向量搜尋")
                 return self.search(query, top_k=top_k, threshold=threshold, language=language, fiscal_year=fiscal_year, group=group, company=company, category=category)
             raise
 

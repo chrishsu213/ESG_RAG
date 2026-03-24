@@ -211,7 +211,7 @@ def _render_single_upload(client, category, display_name, report_group,
                           fiscal_year="", language="", publish_date=""):
     uploaded_file = st.file_uploader("拖放或選擇 PDF / DOCX 檔案", type=["pdf", "docx", "doc"], key="single_uploader")
 
-    pdf_mode    = "vision_pdf"  # 固定使用最高品質模式
+    pdf_mode    = "vision"  # 固定使用最高品質模式（單頁並發 Vision）
     page_offset = 0
     if uploaded_file and uploaded_file.name.lower().endswith(".pdf"):
         page_offset = st.number_input(
@@ -383,7 +383,7 @@ def _render_batch_upload(client, category, display_name, report_group, group, co
                          fiscal_year="", language="", publish_date=""):
     st.info("📦 批次模式：一次上傳多個 PDF / DOCX 檔案，系統將自動依序處理。")
 
-    batch_pdf_mode = "vision_pdf"  # 固定使用最高品質模式
+    batch_pdf_mode = "vision"  # 固定使用最高品質模式（單頁並發 Vision）
     batch_files = st.file_uploader(
         "拖放或選擇多個 PDF / DOCX 檔案", type=["pdf", "docx", "doc"],
         accept_multiple_files=True, key="batch_uploader",

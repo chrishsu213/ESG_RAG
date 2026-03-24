@@ -29,3 +29,6 @@ code_review_bundle.txt
 
 # Gemini Agent
 .gemini/
+
+gcp-service-account.json
+*.json

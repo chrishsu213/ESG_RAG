@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from google import genai
 from google.genai import types
@@ -112,10 +112,10 @@ class RagChat:
         search_mode: str = "hybrid",
         top_k: int = 5,
         language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
+        fiscal_year: Optional[List[str] | str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
-        category: Optional[str] = None,
+        category: Optional[List[str] | str] = None,
         source: str = "api",
     ) -> dict[str, Any]:
         """RAG 問答：搜尋相關 chunks → Re-ranking → Gemini 生成含引用答案。"""
@@ -268,10 +268,10 @@ class RagChat:
         search_mode: str = "hybrid",
         top_k: int = 5,
         language: Optional[str] = None,
-        fiscal_year: Optional[str] = None,
+        fiscal_year: Optional[List[str] | str] = None,
         group: Optional[str] = None,
         company: Optional[str] = None,
-        category: Optional[str] = None,
+        category: Optional[List[str] | str] = None,
         source: str = "admin_ui",
     ) -> dict[str, Any]:
         """

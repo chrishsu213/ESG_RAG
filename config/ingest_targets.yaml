@@ -1,6 +1,16 @@
 # ============================================================
-# 批次入庫設定檔 — RAG專用資料夾 完整清單
+# 批次入庫設定檔 — 優先順序：小檔案優先，大報告最後
 # 確認無誤後執行：python scripts/batch_ingest.py
+# ============================================================
+# 處理順序：
+#   1. TCFD 報告（小）
+#   2. 財報（小，4份）
+#   3. 其他報告（中，台泥+Molicel）
+#   4. 政策文件（小，44份）
+#   5. 年報（大，4份）
+#   6. 永續報告書 2021/2022（auto-skip，已入庫）
+#   7. 永續報告書 2024（大）
+#   8. 永續報告書 2023（最後，曾失敗）
 # ============================================================
 
 defaults:
@@ -10,34 +20,7 @@ defaults:
 
 targets:
 
-  # ── 永續報告書 ──────────────────────────────────────────────
-  - type: pdf_list
-    category: 永續報告書
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2021"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2021年永續報告書.pdf
-
-  - type: pdf_list
-    category: 永續報告書
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2022"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2022年永續報告書.pdf
-
-  - type: pdf_list
-    category: 永續報告書
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2023"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2023年永續報告書.pdf
-
+  # ── TCFD 報告（小檔案，優先）──────────────────────────────
   - type: pdf_list
     category: 永續報告書
     language: zh-TW
@@ -45,26 +28,7 @@ targets:
     company: 台泥
     fiscal_year: "2024"
     files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2024年永續報告書.pdf
-
-  # ── TCFD 報告 ───────────────────────────────────────────────
-  - type: pdf_list
-    category: 永續報告書
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2021"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2021 TCFD Report.pdf
-
-  - type: pdf_list
-    category: 永續報告書
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2022"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2022 TCFD Report.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2024 TCFD Report.pdf
 
   - type: pdf_list
     category: 永續報告書
@@ -80,48 +44,11 @@ targets:
     language: zh-TW
     group: 台泥企業團
     company: 台泥
-    fiscal_year: "2024"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2024 TCFD Report.pdf
-
-  # ── 年度報告 ────────────────────────────────────────────────
-  - type: pdf_list
-    category: 年度報告
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
     fiscal_year: "2021"
     files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/110年度年報及年報附冊.pdf
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2021 TCFD Report.pdf
 
-  - type: pdf_list
-    category: 年度報告
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2022"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/111年度年報及年報附冊.pdf
-
-  - type: pdf_list
-    category: 年度報告
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2023"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/112年度年報及年報附冊.pdf
-
-  - type: pdf_list
-    category: 年度報告
-    language: zh-TW
-    group: 台泥企業團
-    company: 台泥
-    fiscal_year: "2024"
-    files:
-      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/113年度年報及年報附冊.pdf
-
-  # ── 財務報告 ────────────────────────────────────────────────
+  # ── 財務報告（小檔案）──────────────────────────────────────
   - type: pdf_list
     category: 財務報告
     language: zh-TW
@@ -219,7 +146,7 @@ targets:
     files:
       - C:/Users/chris.hsu/Desktop/RAG專用/其他/英/TCC 2024 ESG Insight Report.pdf
 
-  # ── 公司政策文件（44 份，均 < 1 MB）───────────────────────
+  # ── 公司政策文件（44 份，均 < 1 MB，快）──────────────────
   - type: pdf_list
     category: 公司政策文件
     language: zh-TW
@@ -271,3 +198,89 @@ targets:
       - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/集團稅務政策.pdf
       - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/風險管理委員會組織規程.pdf
       - C:/Users/chris.hsu/Desktop/RAG專用/政策/中/風險管理政策.pdf
+
+  # ── 年度報告（大檔案）─────────────────────────────────────
+  - type: pdf_list
+    category: 年度報告
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2021"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/110年度年報及年報附冊.pdf
+
+  - type: pdf_list
+    category: 年度報告
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/111年度年報及年報附冊.pdf
+
+  - type: pdf_list
+    category: 年度報告
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/112年度年報及年報附冊.pdf
+
+  - type: pdf_list
+    category: 年度報告
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/年報/中/113年度年報及年報附冊.pdf
+
+  # ── 永續報告書 2021/2022（已入庫，auto-skip）──────────────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2021"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2021年永續報告書.pdf
+
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2022年永續報告書.pdf
+
+  # ── 永續報告書 2024（大，倒數第2）────────────────────────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2024"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2024年永續報告書.pdf
+
+  # ── 2022 TCFD（曾在 cleaning 階段卡住，排倒數第二）────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2022"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/TCFD/中/2022 TCFD Report.pdf
+
+  # ── 永續報告書 2023（曾失敗，排最後）────────────────────
+  - type: pdf_list
+    category: 永續報告書
+    language: zh-TW
+    group: 台泥企業團
+    company: 台泥
+    fiscal_year: "2023"
+    files:
+      - C:/Users/chris.hsu/Desktop/RAG專用/永續報告書/中/2023年永續報告書.pdf
