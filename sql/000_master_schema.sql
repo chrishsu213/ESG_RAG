@@ -269,11 +269,11 @@ BEGIN
     JOIN documents d ON c.document_id = d.id
     WHERE
       c.chunk_type IN ('child', 'standalone')
-      AND (filter_language     IS NULL OR d.language    = filter_language)
-      AND (filter_fiscal_years IS NULL OR d.fiscal_year = ANY(filter_fiscal_years))
-      AND (filter_group        IS NULL OR d."group"     = filter_group)
-      AND (filter_company      IS NULL OR d.company     = filter_company)
-      AND (filter_categories   IS NULL OR d.category    = ANY(filter_categories))
+      AND (filter_language     IS NULL OR TRIM(d.language)    = filter_language)
+      AND (filter_fiscal_years IS NULL OR TRIM(d.fiscal_year) = ANY(filter_fiscal_years))
+      AND (filter_group        IS NULL OR TRIM(d."group")     = filter_group)
+      AND (filter_company      IS NULL OR TRIM(d.company)     = filter_company)
+      AND (filter_categories   IS NULL OR TRIM(d.category)    = ANY(filter_categories))
     -- 🛡️ 嚴格遵循 HNSW 觸發語法：ORDER BY <=> LIMIT
     ORDER BY c.embedding <=> query_embedding
     LIMIT match_count * 20
@@ -365,11 +365,11 @@ BEGIN
       c.chunk_type IN ('child', 'standalone')
       -- 🛡️ C-2 修復：移除相似度 WHERE，避免破壞 HNSW Index Scan
       -- 閾值過濾改由 deduped_results CTE（Layer 2）處理
-      AND (filter_language     IS NULL OR d.language    = filter_language)
-      AND (filter_fiscal_years IS NULL OR d.fiscal_year = ANY(filter_fiscal_years))
-      AND (filter_group        IS NULL OR d."group"     = filter_group)
-      AND (filter_company      IS NULL OR d.company     = filter_company)
-      AND (filter_categories   IS NULL OR d.category    = ANY(filter_categories))
+      AND (filter_language     IS NULL OR TRIM(d.language)    = filter_language)
+      AND (filter_fiscal_years IS NULL OR TRIM(d.fiscal_year) = ANY(filter_fiscal_years))
+      AND (filter_group        IS NULL OR TRIM(d."group")     = filter_group)
+      AND (filter_company      IS NULL OR TRIM(d.company)     = filter_company)
+      AND (filter_categories   IS NULL OR TRIM(d.category)    = ANY(filter_categories))
     ORDER BY c.embedding <=> query_embedding
     LIMIT match_count * 20
   ),
@@ -383,11 +383,11 @@ BEGIN
     WHERE
       c.chunk_type IN ('child', 'standalone')
       AND c.fts @@ websearch_to_tsquery('simple', query_text)
-      AND (filter_language     IS NULL OR d.language    = filter_language)
-      AND (filter_fiscal_years IS NULL OR d.fiscal_year = ANY(filter_fiscal_years))
-      AND (filter_group        IS NULL OR d."group"     = filter_group)
-      AND (filter_company      IS NULL OR d.company     = filter_company)
-      AND (filter_categories   IS NULL OR d.category    = ANY(filter_categories))
+      AND (filter_language     IS NULL OR TRIM(d.language)    = filter_language)
+      AND (filter_fiscal_years IS NULL OR TRIM(d.fiscal_year) = ANY(filter_fiscal_years))
+      AND (filter_group        IS NULL OR TRIM(d."group")     = filter_group)
+      AND (filter_company      IS NULL OR TRIM(d.company)     = filter_company)
+      AND (filter_categories   IS NULL OR TRIM(d.category)    = ANY(filter_categories))
     ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery('simple', query_text)) DESC
     LIMIT match_count * 20
   ),
@@ -395,8 +395,8 @@ BEGIN
   rrf_scores AS (
     SELECT
       COALESCE(v.id, f.id) AS id,
-      COALESCE(1.0 / (v_rrf_k + v.vec_rank), 0.0) +
-      COALESCE(1.0 / (v_rrf_k + f.fts_rank), 0.0) AS rrf_score
+      COALESCE(1.0::FLOAT / (v_rrf_k + v.vec_rank), 0.0::FLOAT) +
+      COALESCE(1.0::FLOAT / (v_rrf_k + f.fts_rank), 0.0::FLOAT) AS rrf_score
     FROM vector_search v
     FULL OUTER JOIN fts_search f ON v.id = f.id
   ),
