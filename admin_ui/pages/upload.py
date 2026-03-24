@@ -20,7 +20,7 @@ from modules.parser_pdf_vision import VisionPdfParser
 from modules.proofreader import AiProofreader
 from modules.parser_audio import AudioParser
 from modules.embedder import GeminiEmbedder
-from admin_ui.utils.db import add_custom_category
+from admin_ui.utils.db import add_custom_category, get_custom_category_groups
 from admin_ui.utils.constants import (
     CATEGORY_GROUPS, CATEGORY_OPTIONS, CATEGORY_WITH_QUARTER, CATEGORY_WITH_PUBLISH_DATE,
     LANGUAGE_OPTIONS, FISCAL_YEAR_OPTIONS,
@@ -78,13 +78,25 @@ def _process_url(client, url: str, category: str, display_name: str,
 def render(client):
     st.title("📤 上傳與匯入")
 
+    # 取得 DB 動態新增的類別與群組，並與靜態的 CATEGORY_GROUPS 合併
+    custom_groups = get_custom_category_groups(client)
+    merged_groups = {}
+    for g, cats in CATEGORY_GROUPS.items():
+        merged_groups[g] = list(cats)
+    for g, cats in custom_groups.items():
+        if g not in merged_groups:
+            merged_groups[g] = []
+        for c in cats:
+            if c not in merged_groups[g]:
+                merged_groups[g].append(c)
+
     # ── 第一行：類別群組 → 細分類 ─────────────────────────
     col_grp_sel, col_cat = st.columns(2)
     with col_grp_sel:
         _custom_grp_label = "✏️ 自訂群組..."
         _grp_sel = st.selectbox(
             "📂 類別群組",
-            list(CATEGORY_GROUPS.keys()) + [_custom_grp_label],
+            list(merged_groups.keys()) + [_custom_grp_label],
             key="upload_group_label",
         )
         if _grp_sel == _custom_grp_label:
@@ -98,7 +110,7 @@ def render(client):
         _custom_cat_label = "✏️ 自訂分類..."
         _cat_sel = st.selectbox(
             "📁 文件分類",
-            CATEGORY_GROUPS.get(group_label, []) + [_custom_cat_label],
+            merged_groups.get(group_label, []) + [_custom_cat_label],
             key="upload_category",
         )
         if _cat_sel == _custom_cat_label:
