@@ -309,8 +309,8 @@ $$;
 --    ✅ 支援所有維度過濾
 -- ==========================================
 DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,text,text,text,text);
-DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,integer,text,text,text,text);
-DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,text,text,text,text,text);
+DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,integer,text,text,text,text,text);
+DROP FUNCTION IF EXISTS match_chunks_hybrid(vector,text,integer,double precision,text,text[],text,text,text[]);
 
 CREATE OR REPLACE FUNCTION match_chunks_hybrid(
     query_embedding     vector(768),
