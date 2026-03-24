@@ -421,14 +421,14 @@ BEGIN
     ORDER BY COALESCE(c.parent_chunk_id, c.id), r.rrf_score DESC
   )
   SELECT
-    id, document_id, chunk_index, text_content,
-    rrf_score AS similarity,
-    metadata, file_name, display_name, category, report_group,
-    "group", company, fiscal_year, language, source_type,
-    search_type, chunk_type, parent_chunk_id,
-    status, confidentiality, tags, publish_date
-  FROM deduped_results
-  ORDER BY rrf_score DESC
+    d_res.id, d_res.document_id, d_res.chunk_index, d_res.text_content,
+    d_res.rrf_score AS similarity,
+    d_res.metadata, d_res.file_name, d_res.display_name, d_res.category, d_res.report_group,
+    d_res."group", d_res.company, d_res.fiscal_year, d_res.language, d_res.source_type,
+    d_res.search_type, d_res.chunk_type, d_res.parent_chunk_id,
+    d_res.status, d_res.confidentiality, d_res.tags, d_res.publish_date
+  FROM deduped_results d_res
+  ORDER BY d_res.rrf_score DESC
   LIMIT match_count;
 END;
 $$;
