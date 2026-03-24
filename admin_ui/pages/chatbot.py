@@ -144,6 +144,7 @@ def render(client):
                         question=prompt, history=history_for_rag,
                         top_k=chat_top_k, fiscal_year=_selected_fiscal_year,
                         group=_selected_group, company=_selected_company,
+                        category=chat_categories if not chat_cat_all else None
                     )
 
             sources     = result["sources"]
